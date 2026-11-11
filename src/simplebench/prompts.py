@@ -1,10 +1,16 @@
 """The 100 prompts and the rubric text. Scores never go in data/."""
 
+import hashlib
 import json
 from dataclasses import dataclass
 from pathlib import Path
 
 DATASET_ID = "simplebench"
+# simplebench-1 sends the whole completion to gpt-4.1 at temperature 0,
+# with a 200-token reply cap. Bump this when the prompt file, the rubric,
+# the judge, the temperature, the token cap, or how much of the completion
+# is sent changes. Tag the repo with the same id. The answers are not part of it.
+EXAM_ID = "simplebench-1"
 PROMPT_COUNT = 100
 
 
@@ -30,6 +36,20 @@ def repo_root() -> Path:
 
 def dataset_dir() -> Path:
     return repo_root() / "data"
+
+
+def exam_stamp() -> dict[str, str]:
+    """The id and file hashes a later run compares before trusting a mean."""
+    folder = dataset_dir()
+    return {
+        "exam": EXAM_ID,
+        "prompts_sha256": _sha256(folder / "prompts.jsonl"),
+        "rubric_sha256": _sha256(folder / "rubric.txt"),
+    }
+
+
+def _sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def load_prompts(path: Path | None = None) -> tuple[Prompt, ...]:

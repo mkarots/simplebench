@@ -1,5 +1,6 @@
 """Prompt list and judge checks. No network."""
 
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -7,7 +8,6 @@ from pathlib import Path
 import pytest
 
 from simplebench.judge import (
-    JUDGE_CHAR_LIMIT,
     Judgment,
     JudgeError,
     anthropic_complete,
@@ -16,7 +16,7 @@ from simplebench.judge import (
     score_completion,
 )
 from simplebench.answers import render_answers
-from simplebench.prompts import Prompt, PromptError, load_answers, load_prompts
+from simplebench.prompts import Prompt, PromptError, dataset_dir, exam_stamp, load_answers, load_prompts
 from simplebench.score import score_rows, summarize, write_metadata, write_run
 
 
@@ -52,10 +52,10 @@ def test_blank_completion_scores_zero_without_calling_the_judge():
         raise AssertionError("blank rows are not sent")
 
     row = score_completion("c001", "education is important because", "  ", "rubric", complete)
-    assert row == Judgment("c001", 0, "empty", False, True)
+    assert row == Judgment("c001", 0, "empty", True)
 
 
-def test_long_completion_is_cut_before_the_judge_sees_it():
+def test_long_completion_is_sent_whole():
     seen: dict[str, str] = {}
 
     def complete(system: str, user: str) -> str:
@@ -64,12 +64,10 @@ def test_long_completion_is_cut_before_the_judge_sees_it():
 
     completion = "word " * 200
     row = score_completion("c002", "sleep is important because", completion, "rubric\n", complete)
-    assert row.truncated is True
-    assert row.score == 2
+    assert row == Judgment("c002", 2, "it continues", False)
     assert seen["user"].startswith("Prompt:")
-    assert "was cut here" in seen["user"]
-    assert completion[:JUDGE_CHAR_LIMIT] in seen["user"]
-    assert completion not in seen["user"]
+    assert completion in seen["user"]
+    assert "was cut here" not in seen["user"]
 
 
 def test_answer_ids_must_match_the_prompts(tmp_path: Path):
@@ -102,6 +100,9 @@ def test_mean_score_is_the_decision_number(tmp_path: Path):
 
     rows = score_rows(prompts, answers, "rubric\n", complete)
     metrics = write_run(tmp_path, rows, "openai", "gpt-4.1")
+    assert metrics["exam"] == "simplebench-1"
+    assert metrics["prompts_sha256"] == exam_stamp()["prompts_sha256"]
+    assert metrics["rubric_sha256"] == exam_stamp()["rubric_sha256"]
     assert metrics["mean_score"] == 1.0
     assert metrics["counts"] == {"0": 1, "1": 0, "2": 1}
     assert metrics["pass_rate"] == 0.5
@@ -112,6 +113,7 @@ def test_mean_score_is_the_decision_number(tmp_path: Path):
     saved = [json.loads(line) for line in saved_path.read_text().splitlines()]
     assert [row["id"] for row in saved] == ["c001", "c002"]
     assert saved[1]["empty"] is True
+    assert "truncated" not in saved[0]
     write_run(tmp_path, rows, "openai", "gpt-5")
     assert (tmp_path / "judges" / "gpt-5" / "metrics.json").is_file()
     assert (tmp_path / "judges" / "gpt-4.1" / "metrics.json").is_file()
@@ -119,6 +121,17 @@ def test_mean_score_is_the_decision_number(tmp_path: Path):
     assert json.loads((tmp_path / "metadata.json").read_text()) == meta
     assert meta["model"] == "small-model"
     assert meta["answers"] == "answers.jsonl"
+
+
+def test_exam_stamp_is_the_id_and_the_bytes_of_the_two_files():
+    stamp = exam_stamp()
+    folder = dataset_dir()
+    assert stamp == {
+        "exam": "simplebench-1",
+        "prompts_sha256": hashlib.sha256((folder / "prompts.jsonl").read_bytes()).hexdigest(),
+        "rubric_sha256": hashlib.sha256((folder / "rubric.txt").read_bytes()).hexdigest(),
+    }
+    assert stamp["prompts_sha256"] != stamp["rubric_sha256"]
 
 
 def test_openai_and_anthropic_adapters_read_the_text_and_send_the_key():

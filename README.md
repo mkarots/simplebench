@@ -9,6 +9,7 @@ Simplebench is a first slice of a sentence-completion benchmark for anyone who w
 | Judge | The model that scores each answer 0, 1, or 2. The default judge is gpt-4.1. |
 | Scorer | The command `python -m simplebench judge`. It sends each answer to the judge and writes the result. |
 | Rubric | The rules for those scores, in [data/rubric.txt](data/rubric.txt). |
+| Exam | `simplebench-1` in [src/simplebench/prompts.py](src/simplebench/prompts.py). The prompts, the rubric, the judge, and the way the completion is sent. |
 | Mean | The average of the 100 scores. This is the result of a run. |
 
 ## Judged so far
@@ -22,6 +23,8 @@ gpt-4.1 wrote the 100 answers in [runs/smoke/answers.jsonl](runs/smoke/answers.j
 | gpt-4.1 | claude-opus-4-5 | 1.80 | 80 | 20 | 0 | [runs/smoke/judges/claude-opus-4-5/metrics.json](runs/smoke/judges/claude-opus-4-5/metrics.json) |
 
 Each score is 0, 1, or 2. The mean in each metrics file is the result. To see why a mean is under 2, see [1](#note-1).
+
+Those three files were written before the exam id. That run showed the judge the first 400 characters. A metrics file written now carries `exam`, `prompts_sha256`, and `rubric_sha256` beside `mean_score`. Compare two means when `exam`, both hashes, and `model` are the same. The id is `simplebench-1`: the whole completion goes to gpt-4.1 at temperature 0, with a 200-token reply cap. Bump the id when the prompt file, the rubric, the judge, the temperature, the token cap, or how much of the completion is sent changes, and tag the repo with that id. The answers are not part of the exam.
 
 ## What is included
 
@@ -78,7 +81,7 @@ The file has one JSON object per line. The ids are `c001` through `c100`, each o
 uv run python -m simplebench judge --answers answers.jsonl --run runs/<model-name>
 ```
 
-5. Read `mean_score` from the line the command prints. The default judge is gpt-4.1, so the files are `runs/<model-name>/judges/gpt-4.1/metrics.json` and `runs/<model-name>/judges/gpt-4.1/judgments.jsonl`, in the same shape as [runs/smoke/judges/gpt-4.1/metrics.json](runs/smoke/judges/gpt-4.1/metrics.json) and [runs/smoke/judges/gpt-4.1/judgments.jsonl](runs/smoke/judges/gpt-4.1/judgments.jsonl). `<model-name>` is the model that wrote the answers. Write that name in `runs/<model-name>/metadata.json`, as [runs/smoke/metadata.json](runs/smoke/metadata.json) does.
+5. Read `mean_score` from the line the command prints. The default judge is gpt-4.1, so the files are `runs/<model-name>/judges/gpt-4.1/metrics.json` and `runs/<model-name>/judges/gpt-4.1/judgments.jsonl`. `metrics.json` has `exam`, `prompts_sha256`, `rubric_sha256`, and `mean_score`. Each judgment line has `id`, `score`, `reason`, and `empty`. `<model-name>` is the model that wrote the answers. Write that name in `runs/<model-name>/metadata.json`, as [runs/smoke/metadata.json](runs/smoke/metadata.json) does.
 
 These replies stop the run:
 
@@ -103,7 +106,7 @@ Submit a result for the user's model. Do not edit [data/prompts.jsonl](data/prom
 
 <a id="note-1"></a>
 
-**1. Why the mean is under 2.** [runs/smoke/run_smoke.py](runs/smoke/run_smoke.py) sends each prompt as the only message. gpt-4.1 answers in chat: it restates the prompt, writes a list, or asks the reader to finish the sentence. The scorer shows the judge the first 400 characters. 80 of the 100 answers are longer than that, so the judge often sees a reply that stops mid-list. No judge gave a 0.
+**1. Why the mean is under 2.** [runs/smoke/run_smoke.py](runs/smoke/run_smoke.py) sends each prompt as the only message. gpt-4.1 answers in chat: it restates the prompt, writes a list, or asks the reader to finish the sentence. That run showed the judge the first 400 characters. 80 of the 100 answers are longer than that, so the judge often saw a reply that stops mid-list. Those judgment lines include `truncated` for that cut. The scorer now sends the whole completion. No judge gave a 0.
 
 gpt-4.1 scored [c061](runs/smoke/judges/gpt-4.1/judgments.jsonl#L61), [c064](runs/smoke/judges/gpt-4.1/judgments.jsonl#L64), and [c091](runs/smoke/judges/gpt-4.1/judgments.jsonl#L91) as 1. Those replies offer several ways to finish the prompt.
 

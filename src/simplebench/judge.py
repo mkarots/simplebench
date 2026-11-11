@@ -12,7 +12,6 @@ import urllib.request
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 
-JUDGE_CHAR_LIMIT = 400
 DEFAULT_MODEL = {
     "openai": "gpt-4.1",
     "anthropic": "claude-sonnet-4-5",
@@ -32,15 +31,11 @@ class Judgment:
     id: str
     score: int
     reason: str
-    truncated: bool
     empty: bool
 
 
-def user_message(prompt: str, completion: str, truncated: bool) -> str:
-    lines = ["Prompt:", prompt, "", "Completion:", completion]
-    if truncated:
-        lines.extend(["", "The completion continues and was cut here."])
-    return "\n".join(lines)
+def user_message(prompt: str, completion: str) -> str:
+    return "\n".join(["Prompt:", prompt, "", "Completion:", completion])
 
 
 def parse_judgment(text: str) -> tuple[int, str]:
@@ -75,12 +70,10 @@ def score_completion(
 ) -> Judgment:
     """Score one prompt. A blank completion is 0 and does not call ``complete``."""
     if not completion.strip():
-        return Judgment(prompt_id, 0, "empty", False, True)
-    judged = completion[:JUDGE_CHAR_LIMIT]
-    truncated = len(completion) > JUDGE_CHAR_LIMIT
-    raw = complete(rubric, user_message(prompt, judged, truncated))
+        return Judgment(prompt_id, 0, "empty", True)
+    raw = complete(rubric, user_message(prompt, completion))
     score, reason = parse_judgment(raw)
-    return Judgment(prompt_id, score, reason, truncated, False)
+    return Judgment(prompt_id, score, reason, False)
 
 
 def post_json(url: str, headers: Mapping[str, str], body: dict) -> dict:

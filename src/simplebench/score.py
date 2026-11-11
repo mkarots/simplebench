@@ -8,7 +8,7 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 from simplebench.judge import Complete, Judgment, score_completion
-from simplebench.prompts import DATASET_ID, Prompt, PromptError, load_answers, load_prompts, load_rubric
+from simplebench.prompts import DATASET_ID, Prompt, PromptError, exam_stamp, load_answers, load_prompts, load_rubric
 
 JUDGMENTS_NAME = "judgments.jsonl"
 METRICS_NAME = "metrics.json"
@@ -40,8 +40,12 @@ def summarize(judgments: Sequence[Judgment], provider: str, model: str) -> dict:
     for row in judgments:
         counts[str(row.score)] += 1
     total = len(judgments)
+    stamp = exam_stamp()
     return {
         "dataset": DATASET_ID,
+        "exam": stamp["exam"],
+        "prompts_sha256": stamp["prompts_sha256"],
+        "rubric_sha256": stamp["rubric_sha256"],
         "provider": provider,
         "model": model,
         "rows": total,
@@ -85,7 +89,6 @@ def write_run(
                 "id": row.id,
                 "score": row.score,
                 "reason": row.reason,
-                "truncated": row.truncated,
                 "empty": row.empty,
             },
             ensure_ascii=False,
