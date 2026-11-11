@@ -8,7 +8,7 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 from simplebench.judge import Complete, Judgment, score_completion
-from simplebench.prompts import DATASET_ID, PromptError, Stem, load_answers, load_rubric, load_stems
+from simplebench.prompts import DATASET_ID, Prompt, PromptError, load_answers, load_prompts, load_rubric
 
 JUDGMENTS_NAME = "judgments.jsonl"
 METRICS_NAME = "metrics.json"
@@ -17,20 +17,20 @@ JUDGES_DIR = "judges"
 
 
 def score_rows(
-    stems: Sequence[Stem],
+    prompts: Sequence[Prompt],
     answers: Mapping[str, str],
     rubric: str,
     complete: Complete,
 ) -> tuple[Judgment, ...]:
-    """Score every stem. The answer ids must be exactly the stem ids."""
-    expected = {stem.id for stem in stems}
+    """Score every prompt. The answer ids must be exactly the prompt ids."""
+    expected = {item.id for item in prompts}
     got = set(answers)
     if got != expected:
         missing = sorted(expected - got)[:5]
         extra = sorted(got - expected)[:5]
-        raise PromptError(f"answers must match the stem ids; missing {missing} extra {extra}")
+        raise PromptError(f"answers must match the prompt ids; missing {missing} extra {extra}")
     return tuple(
-        score_completion(stem.id, stem.prompt, answers[stem.id], rubric, complete) for stem in stems
+        score_completion(item.id, item.prompt, answers[item.id], rubric, complete) for item in prompts
     )
 
 
@@ -105,8 +105,8 @@ def judge_answers(
     provider: str,
     model: str,
 ) -> dict:
-    """Load the frozen stems, score the answer file, and write the run."""
-    judgments = score_rows(load_stems(), load_answers(answers_path), load_rubric(), complete)
+    """Load the frozen prompts, score the answer file, and write the run."""
+    judgments = score_rows(load_prompts(), load_answers(answers_path), load_rubric(), complete)
     return write_run(run, judgments, provider, model)
 
 

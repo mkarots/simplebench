@@ -1,4 +1,4 @@
-"""Stem list and judge checks. No network."""
+"""Prompt list and judge checks. No network."""
 
 import json
 import os
@@ -15,17 +15,18 @@ from simplebench.judge import (
     parse_judgment,
     score_completion,
 )
-from simplebench.prompts import PromptError, Stem, load_answers, load_stems
+from simplebench.answers import render_answers
+from simplebench.prompts import Prompt, PromptError, load_answers, load_prompts
 from simplebench.score import score_rows, summarize, write_metadata, write_run
 
 
-def test_stem_file_has_one_hundred_unique_unfinished_lines():
-    stems = load_stems()
-    assert len(stems) == 100
-    assert stems[0] == Stem("c001", "education is important because")
-    assert [stem.id for stem in stems] == [f"c{number:03d}" for number in range(1, 101)]
-    assert len({stem.prompt for stem in stems}) == 100
-    assert all(stem.prompt == stem.prompt.strip() and not stem.prompt.endswith(".") for stem in stems)
+def test_prompt_file_has_one_hundred_unique_unfinished_lines():
+    prompts = load_prompts()
+    assert len(prompts) == 100
+    assert prompts[0] == Prompt("c001", "education is important because")
+    assert [item.id for item in prompts] == [f"c{number:03d}" for number in range(1, 101)]
+    assert len({item.prompt for item in prompts}) == 100
+    assert all(item.prompt == item.prompt.strip() and not item.prompt.endswith(".") for item in prompts)
 
 
 def test_parse_plain_json_and_a_fenced_string_score():
@@ -65,15 +66,16 @@ def test_long_completion_is_cut_before_the_judge_sees_it():
     row = score_completion("c002", "sleep is important because", completion, "rubric\n", complete)
     assert row.truncated is True
     assert row.score == 2
+    assert seen["user"].startswith("Prompt:")
     assert "was cut here" in seen["user"]
     assert completion[:JUDGE_CHAR_LIMIT] in seen["user"]
     assert completion not in seen["user"]
 
 
-def test_answer_ids_must_match_the_stems(tmp_path: Path):
-    stems = (Stem("c001", "education is important because"), Stem("c002", "sleep is important because"))
-    with pytest.raises(PromptError, match="missing"):
-        score_rows(stems, {"c001": "it helps"}, "rubric", lambda system, user: "{}")
+def test_answer_ids_must_match_the_prompts(tmp_path: Path):
+    prompts = (Prompt("c001", "education is important because"), Prompt("c002", "sleep is important because"))
+    with pytest.raises(PromptError, match="prompt ids"):
+        score_rows(prompts, {"c001": "it helps"}, "rubric", lambda system, user: "{}")
     repeated = tmp_path / "repeated.jsonl"
     repeated.write_text(
         '{"id": "c001", "completion": "one"}\n{"id": "c001", "completion": "two"}\n',
@@ -91,14 +93,14 @@ def test_answer_ids_must_match_the_stems(tmp_path: Path):
 
 
 def test_mean_score_is_the_decision_number(tmp_path: Path):
-    stems = (Stem("c001", "education is important because"), Stem("c002", "sleep is important because"))
+    prompts = (Prompt("c001", "education is important because"), Prompt("c002", "sleep is important because"))
     answers = {"c001": "it helps people learn", "c002": ""}
 
     def complete(system: str, user: str) -> str:
         assert "education is important because" in user
         return '{"score": 2, "reason": "it finishes the reason"}'
 
-    rows = score_rows(stems, answers, "rubric\n", complete)
+    rows = score_rows(prompts, answers, "rubric\n", complete)
     metrics = write_run(tmp_path, rows, "openai", "gpt-4.1")
     assert metrics["mean_score"] == 1.0
     assert metrics["counts"] == {"0": 1, "1": 0, "2": 1}
@@ -128,8 +130,8 @@ def test_openai_and_anthropic_adapters_read_the_text_and_send_the_key():
             return {"choices": [{"message": {"content": '{"score": 2, "reason": "ok"}'}}]}
         return {"content": [{"type": "text", "text": '{"score": 1, "reason": "partial"}'}]}
 
-    assert openai_complete("sk-test", "gpt-4.1", "rubric", "stem", post) == '{"score": 2, "reason": "ok"}'
-    assert anthropic_complete("ant-test", "claude-sonnet-4-5", "rubric", "stem", post) == (
+    assert openai_complete("sk-test", "gpt-4.1", "rubric", "prompt", post) == '{"score": 2, "reason": "ok"}'
+    assert anthropic_complete("ant-test", "claude-sonnet-4-5", "rubric", "prompt", post) == (
         '{"score": 1, "reason": "partial"}'
     )
     assert calls[0][1]["Authorization"] == "Bearer sk-test"
@@ -139,20 +141,20 @@ def test_openai_and_anthropic_adapters_read_the_text_and_send_the_key():
     assert calls[1][2]["model"] == "claude-sonnet-4-5"
 
 
-def test_judge_answers_scores_every_frozen_stem(tmp_path: Path):
+def test_judge_answers_scores_every_prompt(tmp_path: Path):
     from simplebench.score import judge_answers
 
-    stems = load_stems()
+    prompts = load_prompts()
     answers = tmp_path / "answers.jsonl"
     answers.write_text(
         "".join(
-            json.dumps({"id": stem.id, "completion": "it continues the thought"}) + "\n" for stem in stems
+            json.dumps({"id": item.id, "completion": "it continues the thought"}) + "\n" for item in prompts
         ),
         encoding="utf-8",
     )
 
     def complete(system: str, user: str) -> str:
-        assert system.startswith("Score the completion")
+        assert system.startswith("Score the completion of the prompt")
         return '{"score": 2, "reason": "it finishes"}'
 
     run = tmp_path / "run"
@@ -196,10 +198,59 @@ def test_gpt5_omits_temperature_and_caps_completion_tokens():
         seen.update(body)
         return {"choices": [{"message": {"content": '{"score": 2, "reason": "ok"}'}}]}
 
-    openai_complete("sk", "gpt-5", "rubric", "stem", post)
+    openai_complete("sk", "gpt-5", "rubric", "prompt", post)
     assert "temperature" not in seen
     assert "max_tokens" not in seen
     assert seen["max_completion_tokens"] == 1000
+
+
+def test_render_answers_keeps_prompt_order_and_collapses_whitespace():
+    prompts = (
+        Prompt("c001", "education is important because"),
+        Prompt("c002", "sleep is important because"),
+    )
+    text = render_answers(prompts, {"c002": "  it\nrestores  ", "c001": "it helps"})
+    rows = [json.loads(line) for line in text.splitlines()]
+    assert rows == [
+        {"id": "c001", "completion": "it helps"},
+        {"id": "c002", "completion": "it restores"},
+    ]
+    with pytest.raises(PromptError, match="missing completion"):
+        render_answers(prompts, {"c001": "it helps"})
+    with pytest.raises(PromptError, match="completion must be a string"):
+        render_answers(prompts, {"c001": "it helps", "c002": 1})
+
+
+def test_reference_sends_the_prompt_as_the_only_message():
+    import importlib.util
+
+    path = Path(__file__).resolve().parents[1] / "examples" / "answer_openai.py"
+    spec = importlib.util.spec_from_file_location("answer_openai", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    seen: dict = {}
+
+    class _Message:
+        content = "the reply"
+
+    class _Reply:
+        choices = [type("Choice", (), {"message": _Message()})()]
+
+    class _Completions:
+        def create(self, **kwargs):
+            seen.update(kwargs)
+            return _Reply()
+
+    class _Client:
+        chat = type("Chat", (), {"completions": _Completions()})()
+
+    assert module.complete(_Client(), "gpt-4.1", "education is important because") == "the reply"
+    assert seen["model"] == "gpt-4.1"
+    assert seen["messages"] == [{"role": "user", "content": "education is important because"}]
+    assert seen["temperature"] == 0
+    assert all(message["role"] == "user" for message in seen["messages"])
 
 
 def test_adapter_rejects_a_response_with_no_text():

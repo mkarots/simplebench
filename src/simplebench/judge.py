@@ -37,7 +37,7 @@ class Judgment:
 
 
 def user_message(prompt: str, completion: str, truncated: bool) -> str:
-    lines = ["Stem:", prompt, "", "Completion:", completion]
+    lines = ["Prompt:", prompt, "", "Completion:", completion]
     if truncated:
         lines.extend(["", "The completion continues and was cut here."])
     return "\n".join(lines)
@@ -67,20 +67,20 @@ def parse_judgment(text: str) -> tuple[int, str]:
 
 
 def score_completion(
-    stem_id: str,
+    prompt_id: str,
     prompt: str,
     completion: str,
     rubric: str,
     complete: Complete,
 ) -> Judgment:
-    """Score one stem. A blank completion is 0 and does not call ``complete``."""
+    """Score one prompt. A blank completion is 0 and does not call ``complete``."""
     if not completion.strip():
-        return Judgment(stem_id, 0, "empty", False, True)
+        return Judgment(prompt_id, 0, "empty", False, True)
     judged = completion[:JUDGE_CHAR_LIMIT]
     truncated = len(completion) > JUDGE_CHAR_LIMIT
     raw = complete(rubric, user_message(prompt, judged, truncated))
     score, reason = parse_judgment(raw)
-    return Judgment(stem_id, score, reason, truncated, False)
+    return Judgment(prompt_id, score, reason, truncated, False)
 
 
 def post_json(url: str, headers: Mapping[str, str], body: dict) -> dict:

@@ -1,6 +1,5 @@
 """One-off smoke run. Reads keys from the environment. Writes under runs/smoke."""
 
-import json
 import os
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -14,7 +13,8 @@ from simplebench.judge import (
     post_json,
     score_completion,
 )
-from simplebench.prompts import load_answers, load_rubric, load_stems
+from simplebench.answers import render_answers
+from simplebench.prompts import load_answers, load_rubric, load_prompts
 from simplebench.score import write_metadata, write_run
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -22,8 +22,8 @@ ANSWERS = ROOT / "runs" / "smoke" / "answers.jsonl"
 WORKERS = 8
 
 
-def _continue_stem(key: str, stem: str) -> str:
-    """Send the stem alone. No system instruction."""
+def _continue_prompt(key: str, prompt: str) -> str:
+    """Send the prompt alone. No system instruction."""
     data = post_json(
         "https://api.openai.com/v1/chat/completions",
         {"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
@@ -31,7 +31,7 @@ def _continue_stem(key: str, stem: str) -> str:
             "model": "gpt-4.1",
             "temperature": 0,
             "max_tokens": 200,
-            "messages": [{"role": "user", "content": stem}],
+            "messages": [{"role": "user", "content": prompt}],
         },
     )
     try:
@@ -58,26 +58,25 @@ def _retry(call):
 
 
 def generate() -> None:
-    stems = load_stems()
+    prompts = load_prompts()
     key = os.environ["OPENAI_API_KEY"]
 
-    def one(stem):
-        text = _retry(lambda: _continue_stem(key, stem.prompt))
-        return stem.id, " ".join(text.strip().split())
+    def one(item):
+        text = _retry(lambda: _continue_prompt(key, item.prompt))
+        return item.id, text
 
     rows = {}
     with ThreadPoolExecutor(WORKERS) as pool:
-        futures = [pool.submit(one, stem) for stem in stems]
+        futures = [pool.submit(one, item) for item in prompts]
         for future in as_completed(futures):
-            stem_id, completion = future.result()
-            rows[stem_id] = completion
-    lines = [json.dumps({"id": stem.id, "completion": rows[stem.id]}) for stem in stems]
-    ANSWERS.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    print(f"wrote {ANSWERS} rows={len(lines)}")
+            prompt_id, completion = future.result()
+            rows[prompt_id] = completion
+    ANSWERS.write_text(render_answers(prompts, rows), encoding="utf-8")
+    print(f"wrote {ANSWERS} rows={len(prompts)}")
 
 
 def score(provider: str, model: str) -> None:
-    stems = load_stems()
+    prompts = load_prompts()
     answers = load_answers(ANSWERS)
     rubric = load_rubric()
     key_name = "OPENAI_API_KEY" if provider == "openai" else "ANTHROPIC_API_KEY"
@@ -98,13 +97,13 @@ def score(provider: str, model: str) -> None:
 
         return _retry(call)
 
-    ordered = [None] * len(stems)
+    ordered = [None] * len(prompts)
 
-    def one(index, stem):
-        return index, score_completion(stem.id, stem.prompt, answers[stem.id], rubric, complete)
+    def one(index, item):
+        return index, score_completion(item.id, item.prompt, answers[item.id], rubric, complete)
 
     with ThreadPoolExecutor(WORKERS) as pool:
-        futures = [pool.submit(one, index, stem) for index, stem in enumerate(stems)]
+        futures = [pool.submit(one, index, item) for index, item in enumerate(prompts)]
         for future in as_completed(futures):
             index, row = future.result()
             ordered[index] = row

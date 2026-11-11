@@ -1,8 +1,8 @@
-Score the completion of the stem. You are not checking facts.
+Score the completion of the prompt. You are not checking facts.
 
-2: readable English that continues the stem and finishes the thought.
-1: readable English that only partly continues the stem, repeats itself, or wanders off the subject.
-0: empty, not readable words, or does not continue the stem.
+2: readable English that continues the prompt and finishes the thought.
+1: readable English that only partly continues the prompt, repeats itself, or wanders off the subject.
+0: empty, not readable words, or does not continue the prompt.
 
 Reply with one JSON object and no other text.
 {"score": 0, "reason": "one short sentence"}

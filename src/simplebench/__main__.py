@@ -1,11 +1,11 @@
-"""Sentence-stem commands. Run them from the repository root.
+"""Sentence-completion commands. Run them from the repository root.
 
-    uv run python -m simplebench prompts
+    uv run python examples/answer_openai.py --out answers.jsonl
     uv run python -m simplebench judge --answers answers.jsonl --run runs/their-model
 
 The judge files land in ``runs/their-model/judges/<judge>/``.
 
-``prompts`` prints the 100 stems.
+``prompts`` prints the 100 prompts.
 ``judge`` scores an answer file. The default judge is gpt-4.1.
 Pass ``--provider anthropic`` to score with claude-sonnet-4-5.
 """
@@ -17,15 +17,15 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from simplebench.judge import DEFAULT_MODEL, JudgeError, anthropic_complete, openai_complete
-from simplebench.prompts import PromptError, load_stems, repo_root
+from simplebench.prompts import PromptError, load_prompts, repo_root
 from simplebench.score import judge_answers
 
 _KEY = {"openai": "OPENAI_API_KEY", "anthropic": "ANTHROPIC_API_KEY"}
 
 
 def _prompts(_args: argparse.Namespace) -> None:
-    for stem in load_stems():
-        print(json.dumps({"id": stem.id, "prompt": stem.prompt}, ensure_ascii=False))
+    for item in load_prompts():
+        print(json.dumps({"id": item.id, "prompt": item.prompt}, ensure_ascii=False))
 
 
 def load_env(path: Path) -> None:
@@ -65,10 +65,10 @@ def _judge(args: argparse.Namespace) -> None:
 
 
 def main(argv: Sequence[str] | None = None) -> None:
-    parser = argparse.ArgumentParser(prog="simplebench", description="Sentence-stem exam.")
+    parser = argparse.ArgumentParser(prog="simplebench", description="Sentence-completion exam.")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    prompts = sub.add_parser("prompts", help="Print the 100 stems as JSON lines.")
+    prompts = sub.add_parser("prompts", help="Print the 100 prompts as JSON lines.")
     prompts.set_defaults(func=_prompts)
 
     judge = sub.add_parser("judge", help="Score an answer file with a judge model.")

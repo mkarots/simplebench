@@ -1,20 +1,20 @@
-"""The 100 stems and the rubric text. Scores never go in data/."""
+"""The 100 prompts and the rubric text. Scores never go in data/."""
 
 import json
 from dataclasses import dataclass
 from pathlib import Path
 
 DATASET_ID = "simplebench"
-STEM_COUNT = 100
+PROMPT_COUNT = 100
 
 
 class PromptError(ValueError):
-    """A stem file or an answer file broke the format contract."""
+    """A prompt file or an answer file broke the format contract."""
 
 
 @dataclass(frozen=True)
-class Stem:
-    """One unfinished sentence."""
+class Prompt:
+    """One unfinished sentence. ``prompt`` is the text the model continues."""
 
     id: str
     prompt: str
@@ -32,17 +32,17 @@ def dataset_dir() -> Path:
     return repo_root() / "data"
 
 
-def load_stems(path: Path | None = None) -> tuple[Stem, ...]:
-    """Read the frozen stem list. Ids are c001 through c100, in that order."""
+def load_prompts(path: Path | None = None) -> tuple[Prompt, ...]:
+    """Read the frozen prompt list. Ids are c001 through c100, in that order."""
     path = dataset_dir() / "prompts.jsonl" if path is None else path
-    stems: list[Stem] = []
+    prompts: list[Prompt] = []
     seen: set[str] = set()
     for number, line in enumerate(_lines(path), start=1):
         row = _object(path, number, line)
-        stem_id = row.get("id")
+        prompt_id = row.get("id")
         prompt = row.get("prompt")
         expected = f"c{number:03d}"
-        if stem_id != expected:
+        if prompt_id != expected:
             raise PromptError(f"{path}:{number}: expected id {expected}")
         if not isinstance(prompt, str) or not prompt.strip():
             raise PromptError(f"{path}:{number}: prompt must be non-empty text")
@@ -51,10 +51,10 @@ def load_stems(path: Path | None = None) -> tuple[Stem, ...]:
         if prompt in seen:
             raise PromptError(f"{path}:{number}: repeated prompt")
         seen.add(prompt)
-        stems.append(Stem(stem_id, prompt))
-    if len(stems) != STEM_COUNT:
-        raise PromptError(f"{path}: expected {STEM_COUNT} stems, found {len(stems)}")
-    return tuple(stems)
+        prompts.append(Prompt(prompt_id, prompt))
+    if len(prompts) != PROMPT_COUNT:
+        raise PromptError(f"{path}: expected {PROMPT_COUNT} prompts, found {len(prompts)}")
+    return tuple(prompts)
 
 
 def load_rubric(path: Path | None = None) -> str:
@@ -69,19 +69,19 @@ def load_rubric(path: Path | None = None) -> str:
 
 
 def load_answers(path: Path) -> dict[str, str]:
-    """Map stem id to completion text. Every id must be a new string."""
+    """Map prompt id to completion text. Every id must be a new string."""
     answers: dict[str, str] = {}
     for number, line in enumerate(_lines(path), start=1):
         row = _object(path, number, line)
-        stem_id = row.get("id")
+        prompt_id = row.get("id")
         completion = row.get("completion")
-        if not isinstance(stem_id, str) or not stem_id:
+        if not isinstance(prompt_id, str) or not prompt_id:
             raise PromptError(f"{path}:{number}: id must be a string")
-        if stem_id in answers:
-            raise PromptError(f"{path}:{number}: repeated id {stem_id}")
+        if prompt_id in answers:
+            raise PromptError(f"{path}:{number}: repeated id {prompt_id}")
         if not isinstance(completion, str):
             raise PromptError(f"{path}:{number}: completion must be a string")
-        answers[stem_id] = completion
+        answers[prompt_id] = completion
     return answers
 
 
