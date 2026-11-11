@@ -1,0 +1,6 @@
+{
+  "dataset": "simplebench",
+  "model": "gpt-4.1",
+  "provider": "openai",
+  "answers": "answers.jsonl"
+}

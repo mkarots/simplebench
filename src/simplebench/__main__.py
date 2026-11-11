@@ -1,7 +1,9 @@
 """Sentence-stem commands. Run them from the repository root.
 
-    uv run python -m simple_completions prompts
-    uv run python -m simple_completions judge --answers answers.jsonl --run runs/their-model
+    uv run python -m simplebench prompts
+    uv run python -m simplebench judge --answers answers.jsonl --run runs/their-model
+
+The judge files land in ``runs/their-model/judges/<judge>/``.
 
 ``prompts`` prints the 100 stems.
 ``judge`` scores an answer file. The default judge is gpt-4.1.
@@ -14,9 +16,9 @@ import os
 from collections.abc import Sequence
 from pathlib import Path
 
-from simple_completions.judge import DEFAULT_MODEL, JudgeError, anthropic_complete, openai_complete
-from simple_completions.prompts import PromptError, load_stems
-from simple_completions.score import judge_answers
+from simplebench.judge import DEFAULT_MODEL, JudgeError, anthropic_complete, openai_complete
+from simplebench.prompts import PromptError, load_stems, repo_root
+from simplebench.score import judge_answers
 
 _KEY = {"openai": "OPENAI_API_KEY", "anthropic": "ANTHROPIC_API_KEY"}
 
@@ -26,7 +28,23 @@ def _prompts(_args: argparse.Namespace) -> None:
         print(json.dumps({"id": stem.id, "prompt": stem.prompt}, ensure_ascii=False))
 
 
+def load_env(path: Path) -> None:
+    """Fill missing environment variables from a .env file. Existing values stay."""
+    if not path.is_file():
+        return
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        if not key or key in os.environ:
+            continue
+        os.environ[key] = value.strip().strip("'\"" )
+
+
 def _judge(args: argparse.Namespace) -> None:
+    load_env(repo_root() / ".env")
     provider = args.provider
     model = args.model or DEFAULT_MODEL[provider]
     key_name = _KEY[provider]
@@ -39,14 +57,15 @@ def _judge(args: argparse.Namespace) -> None:
         return poster(api_key, model, system, user)
 
     metrics = judge_answers(args.answers, args.run, complete, provider, model)
+    written = args.run / "judges" / model / "metrics.json"
     print(
-        f"wrote {args.run / 'metrics.json'} mean_score={metrics['mean_score']:.2f} "
+        f"wrote {written} mean_score={metrics['mean_score']:.2f} "
         f"pass_rate={metrics['pass_rate']:.2f} model={model}"
     )
 
 
 def main(argv: Sequence[str] | None = None) -> None:
-    parser = argparse.ArgumentParser(prog="simple_completions", description="Sentence-stem exam.")
+    parser = argparse.ArgumentParser(prog="simplebench", description="Sentence-stem exam.")
     sub = parser.add_subparsers(dest="command", required=True)
 
     prompts = sub.add_parser("prompts", help="Print the 100 stems as JSON lines.")

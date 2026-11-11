@@ -7,11 +7,13 @@ import json
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 
-from simple_completions.judge import Complete, Judgment, score_completion
-from simple_completions.prompts import DATASET_ID, PromptError, Stem, load_answers, load_rubric, load_stems
+from simplebench.judge import Complete, Judgment, score_completion
+from simplebench.prompts import DATASET_ID, PromptError, Stem, load_answers, load_rubric, load_stems
 
 JUDGMENTS_NAME = "judgments.jsonl"
 METRICS_NAME = "metrics.json"
+METADATA_NAME = "metadata.json"
+JUDGES_DIR = "judges"
 
 
 def score_rows(
@@ -51,14 +53,32 @@ def summarize(judgments: Sequence[Judgment], provider: str, model: str) -> dict:
     }
 
 
+def judge_dir(run: Path, model: str) -> Path:
+    """One folder per judge, under the run that holds the answers."""
+    return run / JUDGES_DIR / model
+
+
+def write_metadata(run: Path, provider: str, model: str, answers: str = "answers.jsonl") -> dict:
+    """Name the model that wrote the answers. This is not the judge."""
+    payload = {
+        "dataset": DATASET_ID,
+        "model": model,
+        "provider": provider,
+        "answers": answers,
+    }
+    _write_json(run / METADATA_NAME, payload)
+    return payload
+
+
 def write_run(
     run: Path,
     judgments: Sequence[Judgment],
     provider: str,
     model: str,
 ) -> dict:
-    """Write judgments and metrics beside the run. Returns the metrics object."""
-    run.mkdir(parents=True, exist_ok=True)
+    """Write this judge's files under ``run/judges/<model>``. Returns the metrics object."""
+    folder = judge_dir(run, model)
+    folder.mkdir(parents=True, exist_ok=True)
     lines = [
         json.dumps(
             {
@@ -72,9 +92,9 @@ def write_run(
         )
         for row in judgments
     ]
-    (run / JUDGMENTS_NAME).write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
+    (folder / JUDGMENTS_NAME).write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
     metrics = summarize(judgments, provider, model)
-    _write_json(run / METRICS_NAME, metrics)
+    _write_json(folder / METRICS_NAME, metrics)
     return metrics
 
 

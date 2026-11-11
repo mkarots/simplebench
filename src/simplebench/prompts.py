@@ -4,7 +4,7 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
-DATASET_ID = "simple-completions"
+DATASET_ID = "simplebench"
 STEM_COUNT = 100
 
 

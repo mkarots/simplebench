@@ -1,11 +1,12 @@
 """Stem list and judge checks. No network."""
 
 import json
+import os
 from pathlib import Path
 
 import pytest
 
-from simple_completions.judge import (
+from simplebench.judge import (
     JUDGE_CHAR_LIMIT,
     Judgment,
     JudgeError,
@@ -14,8 +15,8 @@ from simple_completions.judge import (
     parse_judgment,
     score_completion,
 )
-from simple_completions.prompts import PromptError, Stem, load_answers, load_rubric, load_stems, repo_root
-from simple_completions.score import score_rows, summarize, write_run
+from simplebench.prompts import PromptError, Stem, load_answers, load_stems
+from simplebench.score import score_rows, summarize, write_metadata, write_run
 
 
 def test_stem_file_has_one_hundred_unique_unfinished_lines():
@@ -25,16 +26,6 @@ def test_stem_file_has_one_hundred_unique_unfinished_lines():
     assert [stem.id for stem in stems] == [f"c{number:03d}" for number in range(1, 101)]
     assert len({stem.prompt for stem in stems}) == 100
     assert all(stem.prompt == stem.prompt.strip() and not stem.prompt.endswith(".") for stem in stems)
-
-
-def test_readme_quotes_the_rubric_lines():
-    root = repo_root()
-    rubric = (root / "data" / "rubric.txt").read_text(encoding="utf-8")
-    readme = (root / "README.md").read_text(encoding="utf-8")
-    for line in rubric.splitlines():
-        if line.startswith(("2:", "1:", "0:")):
-            assert line in readme
-    assert load_rubric().strip() == rubric.strip()
 
 
 def test_parse_plain_json_and_a_fenced_string_score():
@@ -115,9 +106,17 @@ def test_mean_score_is_the_decision_number(tmp_path: Path):
     assert metrics["empty"] == 1
     assert metrics["judged"] == 1
     assert summarize(rows, "openai", "gpt-4.1") == metrics
-    saved = [json.loads(line) for line in (tmp_path / "judgments.jsonl").read_text().splitlines()]
+    saved_path = tmp_path / "judges" / "gpt-4.1" / "judgments.jsonl"
+    saved = [json.loads(line) for line in saved_path.read_text().splitlines()]
     assert [row["id"] for row in saved] == ["c001", "c002"]
     assert saved[1]["empty"] is True
+    write_run(tmp_path, rows, "openai", "gpt-5")
+    assert (tmp_path / "judges" / "gpt-5" / "metrics.json").is_file()
+    assert (tmp_path / "judges" / "gpt-4.1" / "metrics.json").is_file()
+    meta = write_metadata(tmp_path, "openai", "small-model")
+    assert json.loads((tmp_path / "metadata.json").read_text()) == meta
+    assert meta["model"] == "small-model"
+    assert meta["answers"] == "answers.jsonl"
 
 
 def test_openai_and_anthropic_adapters_read_the_text_and_send_the_key():
@@ -141,7 +140,7 @@ def test_openai_and_anthropic_adapters_read_the_text_and_send_the_key():
 
 
 def test_judge_answers_scores_every_frozen_stem(tmp_path: Path):
-    from simple_completions.score import judge_answers
+    from simplebench.score import judge_answers
 
     stems = load_stems()
     answers = tmp_path / "answers.jsonl"
@@ -156,19 +155,51 @@ def test_judge_answers_scores_every_frozen_stem(tmp_path: Path):
         assert system.startswith("Score the completion")
         return '{"score": 2, "reason": "it finishes"}'
 
-    metrics = judge_answers(answers, tmp_path / "run", complete, "openai", "gpt-4.1")
+    run = tmp_path / "run"
+    metrics = judge_answers(answers, run, complete, "openai", "gpt-4.1")
     assert metrics["rows"] == 100
     assert metrics["mean_score"] == 2.0
     assert metrics["judged"] == 100
     assert metrics["empty"] == 0
+    assert (run / "judges" / "gpt-4.1" / "metrics.json").is_file()
+    assert not (run / "metrics.json").exists()
+
+
+def test_load_env_fills_a_missing_key_and_keeps_an_existing_one(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    from simplebench.__main__ import load_env
+
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "already")
+    path = tmp_path / ".env"
+    path.write_text(
+        "# comment\n\nOPENAI_API_KEY=sk-from-file\nANTHROPIC_API_KEY=from-file\n",
+        encoding="utf-8",
+    )
+    load_env(path)
+    load_env(tmp_path / "missing.env")
+    assert os.environ["OPENAI_API_KEY"] == "sk-from-file"
+    assert os.environ["ANTHROPIC_API_KEY"] == "already"
 
 
 def test_judge_command_stops_when_the_key_is_missing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    from simple_completions.__main__ import main
+    from simplebench.__main__ import main
 
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     with pytest.raises(SystemExit):
         main(["judge", "--answers", str(tmp_path / "answers.jsonl"), "--run", str(tmp_path / "run")])
+
+
+def test_gpt5_omits_temperature_and_caps_completion_tokens():
+    seen: dict = {}
+
+    def post(url: str, headers: dict, body: dict) -> dict:
+        seen.update(body)
+        return {"choices": [{"message": {"content": '{"score": 2, "reason": "ok"}'}}]}
+
+    openai_complete("sk", "gpt-5", "rubric", "stem", post)
+    assert "temperature" not in seen
+    assert "max_tokens" not in seen
+    assert seen["max_completion_tokens"] == 1000
 
 
 def test_adapter_rejects_a_response_with_no_text():

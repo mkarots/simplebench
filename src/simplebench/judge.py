@@ -114,15 +114,7 @@ def openai_complete(
     data = post(
         "https://api.openai.com/v1/chat/completions",
         {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-        {
-            "model": model,
-            "temperature": 0,
-            "max_tokens": 200,
-            "messages": [
-                {"role": "system", "content": system},
-                {"role": "user", "content": user},
-            ],
-        },
+        _openai_body(model, system, user),
     )
     return _openai_text(data)
 
@@ -150,6 +142,23 @@ def anthropic_complete(
         },
     )
     return _anthropic_text(data)
+
+
+def _openai_body(model: str, system: str, user: str) -> dict:
+    """gpt-4.1 takes temperature 0. gpt-5 only accepts the default temperature."""
+    body: dict = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ],
+    }
+    if model.startswith("gpt-5"):
+        body["max_completion_tokens"] = 1000
+        return body
+    body["temperature"] = 0
+    body["max_tokens"] = 200
+    return body
 
 
 def _openai_text(data: dict) -> str:

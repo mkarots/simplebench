@@ -1,0 +1,15 @@
+{
+  "dataset": "simplebench",
+  "provider": "anthropic",
+  "model": "claude-opus-4-5",
+  "rows": 100,
+  "mean_score": 1.8,
+  "counts": {
+    "0": 0,
+    "1": 20,
+    "2": 80
+  },
+  "pass_rate": 0.8,
+  "judged": 100,
+  "empty": 0
+}

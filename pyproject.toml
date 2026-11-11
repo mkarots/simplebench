@@ -1,7 +1,7 @@
 [project]
-name = "simple-completions"
+name = "simplebench"
 version = "0.0.0"
-description = "Score 100 sentence completions with a fixed rubric."
+description = "A simple sentence completion benchmark."
 requires-python = ">=3.11"
 dependencies = []
 
