@@ -1,4 +1,4 @@
-"""The prompt list and the exam files. Scores never go in dataset/."""
+"""The prompt list and the exam files. Scores never go in datasets/."""
 
 import hashlib
 import json
@@ -24,7 +24,7 @@ class Prompt:
 
 @dataclass(frozen=True)
 class Judge:
-    """The model named in ``dataset/config.json``. The scorer calls this model."""
+    """The model named in the exam's ``config.json``. The scorer calls this model."""
 
     provider: str
     model: str
@@ -44,17 +44,33 @@ class Exam:
 def repo_root() -> Path:
     here = Path(__file__).resolve()
     for parent in here.parents:
-        if (parent / "pyproject.toml").is_file() and (parent / "dataset" / "prompts.jsonl").is_file():
+        if (parent / "pyproject.toml").is_file() and (parent / "datasets").is_dir():
             return parent
-    raise PromptError("could not find the repository root (pyproject.toml and dataset/prompts.jsonl)")
+    raise PromptError("could not find the repository root (pyproject.toml and datasets/)")
 
 
 def dataset_dir() -> Path:
-    return repo_root() / "dataset"
+    """The one exam folder under ``datasets/``. A second folder is a choice this command does not make."""
+    return exam_folder(repo_root() / "datasets")
+
+
+def exam_folder(datasets: Path) -> Path:
+    """Return the only exam folder. Each exam is ``datasets/<exam-id>/`` with its own ``config.json``."""
+    if not datasets.is_dir():
+        raise PromptError(f"missing datasets: {datasets}")
+    folders = sorted(
+        path.name
+        for path in datasets.iterdir()
+        if path.is_dir() and not path.name.startswith(".") and (path / "config.json").is_file()
+    )
+    if len(folders) != 1:
+        found = ", ".join(folders) if folders else "none"
+        raise PromptError(f"datasets/ must contain one exam folder, found: {found}")
+    return datasets / folders[0]
 
 
 def load_exam(root: Path | None = None) -> Exam:
-    """Read ``dataset/config.json`` and the prompt and rubric files it names."""
+    """Read one exam folder and the prompt and rubric files its ``config.json`` names."""
     folder = dataset_dir() if root is None else root
     path = folder / "config.json"
     if not path.is_file():
@@ -66,6 +82,8 @@ def load_exam(root: Path | None = None) -> Exam:
     exam_id = data.get("exam")
     if not isinstance(exam_id, str) or _path_segment(exam_id) != exam_id:
         raise PromptError(f"{path}: exam id must be one path segment")
+    if folder.name != exam_id:
+        raise PromptError(f"{path}: exam id must match the folder name")
     judge = _judge(data.get("judge"), path)
     prompts_path = _named_file(folder, path, data.get("prompts"), "prompts")
     rubric_path = _named_file(folder, path, data.get("rubric"), "rubric")

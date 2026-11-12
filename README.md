@@ -4,7 +4,7 @@
 
 Simplebench gives a model the same 100 unfinished sentences and scores how it finishes them. The model writes the rest of the sentence. The judge reads the prompt and the whole completion, then scores it 0, 1, or 2. The mean of those scores is the result.
 
-A 2 is readable English that continues the prompt and finishes the thought. A 1 continues only partly, repeats itself, or wanders off the subject. A 0 is empty, not readable words, or does not continue the prompt. Those rules are [dataset/rubric.txt](dataset/rubric.txt).
+A 2 is readable English that continues the prompt and finishes the thought. A 1 continues only partly, repeats itself, or wanders off the subject. A 0 is empty, not readable words, or does not continue the prompt. Those rules are [datasets/simplebench-1/rubric.txt](datasets/simplebench-1/rubric.txt).
 
 The judge does not check facts. A completion can state something false and still score 2.
 
@@ -12,15 +12,15 @@ The judge does not check facts. A completion can state something false and still
 
 | Term | In this repo |
 | --- | --- |
-| Judge | The model that scores each answer 0, 1, or 2. [dataset/config.json](dataset/config.json) names it: openai / gpt-4.1. |
+| Judge | The model that scores each answer 0, 1, or 2. [datasets/simplebench-1/config.json](datasets/simplebench-1/config.json) names it: openai / gpt-4.1. |
 | Scorer | The command `python -m simplebench judge`. It sends each answer to the judge and writes the result. |
-| Rubric | [dataset/rubric.txt](dataset/rubric.txt). The scoring rules the judge reads. |
-| Exam | [dataset/config.json](dataset/config.json). It names the prompt file, the rubric file, and the judge. |
+| Rubric | [datasets/simplebench-1/rubric.txt](datasets/simplebench-1/rubric.txt). The scoring rules the judge reads. |
+| Exam | [datasets/simplebench-1/config.json](datasets/simplebench-1/config.json). One folder under `datasets/` per exam. It names the prompt file, the rubric file, and the judge. |
 | Mean | The average of the 100 scores. This is the result of a run. |
 
 ## Judged so far
 
-gpt-4.1 wrote the 100 answers and the current exam scored them. The checkpoint is [runs/gpt-4.1/smoke/](runs/gpt-4.1/smoke/). `model` in the metrics file is the model that wrote the answers. `judge` is gpt-4.1 from [dataset/config.json](dataset/config.json). The whole completion is sent, at temperature 0, with a 200-token reply cap. Each score is 0, 1, or 2. The mean is the result. To see why a mean is under 2, see [1](#note-1).
+gpt-4.1 wrote the 100 answers and the current exam scored them. The checkpoint is [runs/gpt-4.1/smoke/](runs/gpt-4.1/smoke/). `model` in the metrics file is the model that wrote the answers. `judge` is gpt-4.1 from [datasets/simplebench-1/config.json](datasets/simplebench-1/config.json). The whole completion is sent, at temperature 0, with a 200-token reply cap. Each score is 0, 1, or 2. The mean is the result. To see why a mean is under 2, see [1](#note-1).
 
 | Answers | Checkpoint | Judge | Mean | 2 | 1 | 0 | Result |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -32,17 +32,17 @@ That metrics file carries `exam` (`simplebench-1`) and `exam_sha256` beside `mea
 
 | Piece | Where | Role |
 | --- | --- | --- |
-| Dataset | [dataset/prompts.jsonl](dataset/prompts.jsonl) | The 100 prompts a model completes |
-| Rubric | [dataset/rubric.txt](dataset/rubric.txt) | The scoring rules the judge reads |
+| Dataset | [datasets/simplebench-1/prompts.jsonl](datasets/simplebench-1/prompts.jsonl) | The 100 prompts a model completes |
+| Rubric | [datasets/simplebench-1/rubric.txt](datasets/simplebench-1/rubric.txt) | The scoring rules the judge reads |
 | Model | yours, or [examples/answer_openai.py](examples/answer_openai.py) | Reads the prompts and writes `answers.jsonl` |
-| Exam | [dataset/config.json](dataset/config.json) | Which prompt file, which rubric file, and which judge. |
+| Exam | [datasets/simplebench-1/config.json](datasets/simplebench-1/config.json) | Which prompt file, which rubric file, and which judge. A later exam is another folder under `datasets/`. |
 | Scorer | [src/simplebench/__main__.py](src/simplebench/__main__.py) (`python -m simplebench judge`) | Reads `answers.jsonl` and writes `runs/<model>/<checkpoint>/` |
 
 [examples/answer_openai.py](examples/answer_openai.py) is the reference for producing answers. The finished run of that script, scored with the current exam, is [runs/gpt-4.1/smoke/](runs/gpt-4.1/smoke/).
 
 ## A slice of the dataset
 
-The first three prompts in [dataset/prompts.jsonl](dataset/prompts.jsonl#L1-L3):
+The first three prompts in [datasets/simplebench-1/prompts.jsonl](datasets/simplebench-1/prompts.jsonl#L1-L3):
 
 ```json
 {"id": "c001", "prompt": "education is important because"}
@@ -106,7 +106,7 @@ These replies stop the run:
 
 ## For agents
 
-Submit a result for the user's model. Do not edit [dataset/prompts.jsonl](dataset/prompts.jsonl) or [dataset/config.json](dataset/config.json). Do not commit `.env`. Do not invent `OPENAI_API_KEY`. If `.env` is missing, copy [.env.example](.env.example) and ask the user for the key.
+Submit a result for the user's model. Do not edit [datasets/simplebench-1/prompts.jsonl](datasets/simplebench-1/prompts.jsonl) or [datasets/simplebench-1/config.json](datasets/simplebench-1/config.json). Do not commit `.env`. Do not invent `OPENAI_API_KEY`. If `.env` is missing, copy [.env.example](.env.example) and ask the user for the key.
 
 1. Open [examples/answer_openai.py](examples/answer_openai.py). Replace `complete` with a call to the user's model. Pass the prompt text as the only message. Do not add a system message.
 2. Run `uv run python examples/answer_openai.py --out answers.jsonl`. That writes one JSON object per line, ids `c001` to `c100`, in the shape of [runs/gpt-4.1/smoke/answers.jsonl](runs/gpt-4.1/smoke/answers.jsonl).

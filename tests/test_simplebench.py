@@ -15,7 +15,18 @@ from simplebench.judge import (
     score_completion,
 )
 from simplebench.answers import render_answers
-from simplebench.prompts import Exam, Judge, Prompt, PromptError, dataset_dir, load_answers, load_exam, load_prompts
+from simplebench.prompts import (
+    Exam,
+    Judge,
+    Prompt,
+    PromptError,
+    dataset_dir,
+    exam_folder,
+    load_answers,
+    load_exam,
+    load_prompts,
+    repo_root,
+)
 from simplebench.score import compare_runs, run_dir, score_rows, summarize, write_run
 
 
@@ -135,12 +146,15 @@ def test_exam_file_points_at_the_prompt_file_and_the_rubric_file(tmp_path: Path)
         + (folder / "prompts.jsonl").read_bytes()
         + (folder / "rubric.txt").read_bytes()
     )
+    assert folder == repo_root() / "datasets" / "simplebench-1"
     assert exam.id == "simplebench-1"
     assert exam.judge == Judge("openai", "gpt-4.1")
     assert exam.rubric == (folder / "rubric.txt").read_text(encoding="utf-8")
     assert json.loads((folder / "config.json").read_text())["rubric"] == "rubric.txt"
     assert len(exam.prompts) == 100
     assert exam.sha256 == hashlib.sha256(raw).hexdigest()
+    published = json.loads((repo_root() / "runs" / "gpt-4.1" / "smoke" / "metrics.json").read_text())
+    assert exam.sha256 == published["exam_sha256"]
     with pytest.raises(PromptError, match="missing exam"):
         load_exam(tmp_path)
     (tmp_path / "config.json").write_text(
@@ -149,32 +163,66 @@ def test_exam_file_points_at_the_prompt_file_and_the_rubric_file(tmp_path: Path)
     )
     with pytest.raises(PromptError, match="exam id"):
         load_exam(tmp_path)
-    (tmp_path / "config.json").write_text(
+    other = tmp_path / "simplebench-1"
+    other.mkdir()
+    (other / "config.json").write_text(
         '{"exam": "simplebench-1", "prompts": "prompts.jsonl", "rubric": "rubric.txt", "judge": {"provider": "openai", "model": "gpt-5"}}\n',
         encoding="utf-8",
     )
     with pytest.raises(PromptError, match="openai/gpt-4.1"):
-        load_exam(tmp_path)
+        load_exam(other)
+
+
+def test_datasets_folder_holds_one_exam(tmp_path: Path):
+    datasets = tmp_path / "datasets"
+    datasets.mkdir()
+    with pytest.raises(PromptError, match="found: none"):
+        exam_folder(datasets)
+    first = datasets / "simplebench-1"
+    first.mkdir()
+    (first / "config.json").write_text("{}\n", encoding="utf-8")
+    assert exam_folder(datasets) == first
+    second = datasets / "simplebench-2"
+    second.mkdir()
+    (second / "config.json").write_text("{}\n", encoding="utf-8")
+    with pytest.raises(PromptError, match="simplebench-1, simplebench-2"):
+        exam_folder(datasets)
+    (datasets / "notes").mkdir()
+    with pytest.raises(PromptError, match="simplebench-1, simplebench-2"):
+        exam_folder(datasets)
+
+
+def test_exam_id_must_match_its_folder(tmp_path: Path):
+    folder = tmp_path / "other-name"
+    folder.mkdir()
+    (folder / "config.json").write_text(
+        '{"exam": "simplebench-1", "prompts": "prompts.jsonl", "rubric": "rubric.txt", "judge": {"provider": "openai", "model": "gpt-4.1"}}\n',
+        encoding="utf-8",
+    )
+    with pytest.raises(PromptError, match="folder name"):
+        load_exam(folder)
 
 
 def test_exam_rejects_a_missing_empty_or_escaped_rubric(tmp_path: Path):
-    exam_path = tmp_path / "config.json"
+    folder = tmp_path / "simplebench-1"
+    folder.mkdir()
+    exam_path = folder / "config.json"
     exam_path.write_text(
         '{"exam": "simplebench-1", "prompts": "prompts.jsonl", "rubric": "rubric.txt", "judge": {"provider": "openai", "model": "gpt-4.1"}}\n',
         encoding="utf-8",
     )
-    (tmp_path / "prompts.jsonl").write_text('{"id": "c001", "prompt": "x"}\n', encoding="utf-8")
+    (folder / "prompts.jsonl").write_text('{"id": "c001", "prompt": "x"}\n', encoding="utf-8")
     with pytest.raises(PromptError, match="missing rubric"):
-        load_exam(tmp_path)
-    (tmp_path / "rubric.txt").write_text("   \n", encoding="utf-8")
+        load_exam(folder)
+    (folder / "rubric.txt").write_text("   \n", encoding="utf-8")
     with pytest.raises(PromptError, match="non-empty"):
-        load_exam(tmp_path)
+        load_exam(folder)
     exam_path.write_text(
         '{"exam": "simplebench-1", "prompts": "prompts.jsonl", "rubric": "../rubric.txt", "judge": {"provider": "openai", "model": "gpt-4.1"}}\n',
         encoding="utf-8",
     )
     with pytest.raises(PromptError, match="rubric must name a file"):
-        load_exam(tmp_path)
+        load_exam(folder)
 
 
 def test_openai_adapter_calls_gpt_4_1():

@@ -6,7 +6,7 @@
 
 The score lands in ``runs/<model>/<checkpoint>/``.
 
-``judge`` scores an answer file with ``dataset/config.json``.
+``judge`` scores an answer file with the one exam folder under ``datasets/``.
 ``compare`` prints the two means and the prompts whose score moved.
 """
 
@@ -74,7 +74,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     parser = argparse.ArgumentParser(prog="simplebench", description="Sentence-completion exam.")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    judge = sub.add_parser("judge", help="Score an answer file with dataset/config.json.")
+    judge = sub.add_parser("judge", help="Score an answer file with the one exam folder under datasets/.")
     judge.add_argument("--answers", type=Path, required=True)
     judge.add_argument("--model", required=True, help="Model that wrote the answers.")
     judge.add_argument("--checkpoint", required=True, help="Checkpoint of that model.")
