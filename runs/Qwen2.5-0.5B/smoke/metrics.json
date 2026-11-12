@@ -1,0 +1,20 @@
+{
+  "exam": "simplebench-1",
+  "exam_sha256": "02c30106c3d820ee776e55a61c4b17bae2cf6f8de9cf6784383c07bc6ddb50ae",
+  "model": "Qwen2.5-0.5B",
+  "checkpoint": "smoke",
+  "judge": {
+    "provider": "openai",
+    "model": "gpt-4.1"
+  },
+  "rows": 100,
+  "mean_score": 1.7,
+  "counts": {
+    "0": 0,
+    "1": 30,
+    "2": 70
+  },
+  "pass_rate": 0.7,
+  "judged": 100,
+  "empty": 0
+}
