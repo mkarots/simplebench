@@ -1,0 +1,9 @@
+{
+  "exam": "simplebench-1",
+  "prompts": "prompts.jsonl",
+  "rubric": "rubric.txt",
+  "judge": {
+    "provider": "openai",
+    "model": "gpt-4.1"
+  }
+}

@@ -1,5 +1,6 @@
 """Prompt list and judge checks. No network."""
 
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -7,17 +8,15 @@ from pathlib import Path
 import pytest
 
 from simplebench.judge import (
-    JUDGE_CHAR_LIMIT,
     Judgment,
     JudgeError,
-    anthropic_complete,
     openai_complete,
     parse_judgment,
     score_completion,
 )
 from simplebench.answers import render_answers
-from simplebench.prompts import Prompt, PromptError, load_answers, load_prompts
-from simplebench.score import score_rows, summarize, write_metadata, write_run
+from simplebench.prompts import Exam, Judge, Prompt, PromptError, dataset_dir, load_answers, load_exam, load_prompts
+from simplebench.score import compare_runs, run_dir, score_rows, summarize, write_run
 
 
 def test_prompt_file_has_one_hundred_unique_unfinished_lines():
@@ -52,10 +51,10 @@ def test_blank_completion_scores_zero_without_calling_the_judge():
         raise AssertionError("blank rows are not sent")
 
     row = score_completion("c001", "education is important because", "  ", "rubric", complete)
-    assert row == Judgment("c001", 0, "empty", False, True)
+    assert row == Judgment("c001", 0, "empty", True)
 
 
-def test_long_completion_is_cut_before_the_judge_sees_it():
+def test_long_completion_is_sent_whole():
     seen: dict[str, str] = {}
 
     def complete(system: str, user: str) -> str:
@@ -64,12 +63,10 @@ def test_long_completion_is_cut_before_the_judge_sees_it():
 
     completion = "word " * 200
     row = score_completion("c002", "sleep is important because", completion, "rubric\n", complete)
-    assert row.truncated is True
-    assert row.score == 2
+    assert row == Judgment("c002", 2, "it continues", False)
     assert seen["user"].startswith("Prompt:")
-    assert "was cut here" in seen["user"]
-    assert completion[:JUDGE_CHAR_LIMIT] in seen["user"]
-    assert completion not in seen["user"]
+    assert completion in seen["user"]
+    assert "was cut here" not in seen["user"]
 
 
 def test_answer_ids_must_match_the_prompts(tmp_path: Path):
@@ -101,44 +98,97 @@ def test_mean_score_is_the_decision_number(tmp_path: Path):
         return '{"score": 2, "reason": "it finishes the reason"}'
 
     rows = score_rows(prompts, answers, "rubric\n", complete)
-    metrics = write_run(tmp_path, rows, "openai", "gpt-4.1")
+    exam = Exam("simplebench-1", prompts, "rubric\n", Judge("openai", "gpt-4.1"), "abc")
+    answers_path = tmp_path / "answers.jsonl"
+    answers_path.write_text('{"id": "c001", "completion": "it helps"}\n{"id": "c002", "completion": ""}\n')
+    run = tmp_path / "tiny" / "step-1000"
+    metrics = write_run(run, rows, exam, "tiny", "step-1000", answers_path)
+    assert metrics["exam"] == "simplebench-1"
+    assert metrics["exam_sha256"] == "abc"
+    assert metrics["model"] == "tiny"
+    assert metrics["checkpoint"] == "step-1000"
+    assert metrics["judge"] == {"provider": "openai", "model": "gpt-4.1"}
+    assert "provider" not in metrics
     assert metrics["mean_score"] == 1.0
     assert metrics["counts"] == {"0": 1, "1": 0, "2": 1}
     assert metrics["pass_rate"] == 0.5
     assert metrics["empty"] == 1
     assert metrics["judged"] == 1
-    assert summarize(rows, "openai", "gpt-4.1") == metrics
-    saved_path = tmp_path / "judges" / "gpt-4.1" / "judgments.jsonl"
+    assert summarize(rows, exam, "tiny", "step-1000") == metrics
+    assert (run / "answers.jsonl").read_text() == answers_path.read_text()
+    write_run(run, rows, exam, "tiny", "step-1000", run / "answers.jsonl")
+    assert (run / "answers.jsonl").read_text() == answers_path.read_text()
+    saved_path = run / "judgments.jsonl"
     saved = [json.loads(line) for line in saved_path.read_text().splitlines()]
     assert [row["id"] for row in saved] == ["c001", "c002"]
     assert saved[1]["empty"] is True
-    write_run(tmp_path, rows, "openai", "gpt-5")
-    assert (tmp_path / "judges" / "gpt-5" / "metrics.json").is_file()
-    assert (tmp_path / "judges" / "gpt-4.1" / "metrics.json").is_file()
-    meta = write_metadata(tmp_path, "openai", "small-model")
-    assert json.loads((tmp_path / "metadata.json").read_text()) == meta
-    assert meta["model"] == "small-model"
-    assert meta["answers"] == "answers.jsonl"
+    assert "truncated" not in saved[0]
+    assert (run / "metrics.json").is_file()
+    assert not (run / "judges").exists()
 
 
-def test_openai_and_anthropic_adapters_read_the_text_and_send_the_key():
+def test_exam_file_points_at_the_prompt_file_and_the_rubric_file(tmp_path: Path):
+    exam = load_exam()
+    folder = dataset_dir()
+    raw = (
+        (folder / "config.json").read_bytes()
+        + (folder / "prompts.jsonl").read_bytes()
+        + (folder / "rubric.txt").read_bytes()
+    )
+    assert exam.id == "simplebench-1"
+    assert exam.judge == Judge("openai", "gpt-4.1")
+    assert exam.rubric == (folder / "rubric.txt").read_text(encoding="utf-8")
+    assert json.loads((folder / "config.json").read_text())["rubric"] == "rubric.txt"
+    assert len(exam.prompts) == 100
+    assert exam.sha256 == hashlib.sha256(raw).hexdigest()
+    with pytest.raises(PromptError, match="missing exam"):
+        load_exam(tmp_path)
+    (tmp_path / "config.json").write_text(
+        '{"exam": "simplebench/2", "prompts": "prompts.jsonl", "rubric": "rubric.txt"}\n',
+        encoding="utf-8",
+    )
+    with pytest.raises(PromptError, match="exam id"):
+        load_exam(tmp_path)
+    (tmp_path / "config.json").write_text(
+        '{"exam": "simplebench-1", "prompts": "prompts.jsonl", "rubric": "rubric.txt", "judge": {"provider": "openai", "model": "gpt-5"}}\n',
+        encoding="utf-8",
+    )
+    with pytest.raises(PromptError, match="openai/gpt-4.1"):
+        load_exam(tmp_path)
+
+
+def test_exam_rejects_a_missing_empty_or_escaped_rubric(tmp_path: Path):
+    exam_path = tmp_path / "config.json"
+    exam_path.write_text(
+        '{"exam": "simplebench-1", "prompts": "prompts.jsonl", "rubric": "rubric.txt", "judge": {"provider": "openai", "model": "gpt-4.1"}}\n',
+        encoding="utf-8",
+    )
+    (tmp_path / "prompts.jsonl").write_text('{"id": "c001", "prompt": "x"}\n', encoding="utf-8")
+    with pytest.raises(PromptError, match="missing rubric"):
+        load_exam(tmp_path)
+    (tmp_path / "rubric.txt").write_text("   \n", encoding="utf-8")
+    with pytest.raises(PromptError, match="non-empty"):
+        load_exam(tmp_path)
+    exam_path.write_text(
+        '{"exam": "simplebench-1", "prompts": "prompts.jsonl", "rubric": "../rubric.txt", "judge": {"provider": "openai", "model": "gpt-4.1"}}\n',
+        encoding="utf-8",
+    )
+    with pytest.raises(PromptError, match="rubric must name a file"):
+        load_exam(tmp_path)
+
+
+def test_openai_adapter_calls_gpt_4_1():
     calls: list[tuple[str, dict, dict]] = []
 
     def post(url: str, headers: dict, body: dict) -> dict:
         calls.append((url, dict(headers), body))
-        if "openai" in url:
-            return {"choices": [{"message": {"content": '{"score": 2, "reason": "ok"}'}}]}
-        return {"content": [{"type": "text", "text": '{"score": 1, "reason": "partial"}'}]}
+        return {"choices": [{"message": {"content": '{"score": 2, "reason": "ok"}'}}]}
 
     assert openai_complete("sk-test", "gpt-4.1", "rubric", "prompt", post) == '{"score": 2, "reason": "ok"}'
-    assert anthropic_complete("ant-test", "claude-sonnet-4-5", "rubric", "prompt", post) == (
-        '{"score": 1, "reason": "partial"}'
-    )
     assert calls[0][1]["Authorization"] == "Bearer sk-test"
     assert calls[0][2]["model"] == "gpt-4.1"
     assert calls[0][2]["temperature"] == 0
-    assert calls[1][1]["x-api-key"] == "ant-test"
-    assert calls[1][2]["model"] == "claude-sonnet-4-5"
+    assert calls[0][2]["max_tokens"] == 200
 
 
 def test_judge_answers_scores_every_prompt(tmp_path: Path):
@@ -158,13 +208,16 @@ def test_judge_answers_scores_every_prompt(tmp_path: Path):
         return '{"score": 2, "reason": "it finishes"}'
 
     run = tmp_path / "run"
-    metrics = judge_answers(answers, run, complete, "openai", "gpt-4.1")
+    metrics = judge_answers(answers, run, complete, load_exam(), "tiny", "step-1000")
     assert metrics["rows"] == 100
+    assert metrics["model"] == "tiny"
+    assert metrics["judge"]["model"] == "gpt-4.1"
     assert metrics["mean_score"] == 2.0
     assert metrics["judged"] == 100
     assert metrics["empty"] == 0
-    assert (run / "judges" / "gpt-4.1" / "metrics.json").is_file()
-    assert not (run / "metrics.json").exists()
+    assert (run / "answers.jsonl").read_bytes() == answers.read_bytes()
+    assert (run / "metrics.json").is_file()
+    assert (run / "judgments.jsonl").is_file()
 
 
 def test_load_env_fills_a_missing_key_and_keeps_an_existing_one(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
@@ -183,25 +236,62 @@ def test_load_env_fills_a_missing_key_and_keeps_an_existing_one(tmp_path: Path, 
     assert os.environ["ANTHROPIC_API_KEY"] == "already"
 
 
+def test_run_dir_is_runs_model_checkpoint(tmp_path: Path):
+    assert run_dir("tiny", "step-1000", tmp_path) == tmp_path / "runs" / "tiny" / "step-1000"
+    with pytest.raises(PromptError, match="path segment"):
+        run_dir("tiny/other", "step-1000", tmp_path)
+    with pytest.raises(PromptError, match="path segment"):
+        run_dir("tiny", "..", tmp_path)
+    with pytest.raises(PromptError, match="path segment"):
+        run_dir(" ", "step-1000", tmp_path)
+
+
+def test_judge_command_scores_under_runs_model_checkpoint(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    import simplebench.__main__ as cli
+    import simplebench.score as score
+
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setattr(score, "repo_root", lambda: tmp_path)
+    seen: dict[str, Path] = {}
+
+    def fake_judge(answers: Path, run: Path, complete, exam: Exam, model: str, checkpoint: str) -> dict:
+        seen["run"] = run
+        assert exam.id == "simplebench-1"
+        assert model == "tiny"
+        assert checkpoint == "step-1000"
+        return {"mean_score": 1.0, "pass_rate": 0.5}
+
+    monkeypatch.setattr(cli, "judge_answers", fake_judge)
+    cli.main(
+        [
+            "judge",
+            "--answers",
+            str(tmp_path / "answers.jsonl"),
+            "--model",
+            "tiny",
+            "--checkpoint",
+            "step-1000",
+        ]
+    )
+    assert seen["run"] == tmp_path / "runs" / "tiny" / "step-1000"
+
+
 def test_judge_command_stops_when_the_key_is_missing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     from simplebench.__main__ import main
 
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     with pytest.raises(SystemExit):
-        main(["judge", "--answers", str(tmp_path / "answers.jsonl"), "--run", str(tmp_path / "run")])
-
-
-def test_gpt5_omits_temperature_and_caps_completion_tokens():
-    seen: dict = {}
-
-    def post(url: str, headers: dict, body: dict) -> dict:
-        seen.update(body)
-        return {"choices": [{"message": {"content": '{"score": 2, "reason": "ok"}'}}]}
-
-    openai_complete("sk", "gpt-5", "rubric", "prompt", post)
-    assert "temperature" not in seen
-    assert "max_tokens" not in seen
-    assert seen["max_completion_tokens"] == 1000
+        main(
+            [
+                "judge",
+                "--answers",
+                str(tmp_path / "answers.jsonl"),
+                "--model",
+                "tiny",
+                "--checkpoint",
+                "step-1000",
+            ]
+        )
 
 
 def test_render_answers_keeps_prompt_order_and_collapses_whitespace():
@@ -256,5 +346,67 @@ def test_reference_sends_the_prompt_as_the_only_message():
 def test_adapter_rejects_a_response_with_no_text():
     with pytest.raises(JudgeError, match="message content"):
         openai_complete("sk", "gpt-4.1", "r", "u", lambda url, headers, body: {})
-    with pytest.raises(JudgeError, match="text block"):
-        anthropic_complete("ant", "claude", "r", "u", lambda url, headers, body: {"content": []})
+    with pytest.raises(JudgeError, match="gpt-4.1"):
+        openai_complete("sk", "gpt-5", "r", "u", lambda url, headers, body: {})
+
+
+def _checkpoint(folder: Path, model: str, checkpoint: str, scores: dict[str, int], exam_sha: str = "abc") -> None:
+    folder.mkdir(parents=True)
+    rows = [
+        json.dumps({"id": prompt_id, "score": score, "reason": "because", "empty": False})
+        for prompt_id, score in scores.items()
+    ]
+    (folder / "judgments.jsonl").write_text("\n".join(rows) + "\n", encoding="utf-8")
+    (folder / "metrics.json").write_text(
+        json.dumps(
+            {
+                "exam": "simplebench-1",
+                "exam_sha256": exam_sha,
+                "model": model,
+                "checkpoint": checkpoint,
+                "mean_score": sum(scores.values()) / len(scores),
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def test_compare_names_the_prompts_whose_score_moved(tmp_path: Path, capsys: pytest.CaptureFixture[str]):
+    from simplebench.__main__ import main
+
+    left = tmp_path / "tiny" / "step-1000"
+    right = tmp_path / "tiny" / "step-2000"
+    _checkpoint(left, "tiny", "step-1000", {"c001": 2, "c002": 1})
+    _checkpoint(right, "tiny", "step-2000", {"c001": 2, "c002": 2})
+    result = compare_runs(left, right)
+    assert result["exam"] == "simplebench-1"
+    assert result["left_mean"] == 1.5
+    assert result["right_mean"] == 2.0
+    assert result["changed"] == (("c002", 1, 2),)
+    main(["compare", "--left", str(left), "--right", str(right)])
+    printed = capsys.readouterr().out
+    assert "tiny step-1000 mean_score=1.50" in printed
+    assert "tiny step-2000 mean_score=2.00" in printed
+    assert "c002 1 -> 2" in printed
+
+
+def test_compare_rejects_a_different_exam(tmp_path: Path):
+    left = tmp_path / "left"
+    right = tmp_path / "right"
+    _checkpoint(left, "tiny", "step-1000", {"c001": 2})
+    _checkpoint(right, "tiny", "step-2000", {"c001": 2}, exam_sha="def")
+    with pytest.raises(PromptError, match="exams differ"):
+        compare_runs(left, right)
+
+
+def test_compare_rejects_a_folder_with_no_metrics(tmp_path: Path):
+    with pytest.raises(PromptError, match="missing metrics"):
+        compare_runs(tmp_path / "left", tmp_path / "right")
+
+
+def test_compare_says_when_no_score_moved(tmp_path: Path):
+    left = tmp_path / "left"
+    right = tmp_path / "right"
+    _checkpoint(left, "tiny", "step-1000", {"c001": 2})
+    _checkpoint(right, "tiny", "step-2000", {"c001": 2})
+    assert compare_runs(left, right)["changed"] == ()
