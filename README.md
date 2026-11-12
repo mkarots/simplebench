@@ -1,3 +1,5 @@
+![simplebench](docs/simplebench.png)
+
 # simplebench
 
 Simplebench is a first slice of a sentence-completion benchmark for anyone who wants to score a model on the same 100 prompts.
