@@ -2,7 +2,11 @@
 
 # simplebench
 
-Simplebench is a first slice of a sentence-completion benchmark for anyone who wants to score a model on the same 100 prompts.
+Simplebench gives a model the same 100 unfinished sentences and scores how it finishes them. The model writes the rest of the sentence. The judge reads the prompt and the whole completion, then scores it 0, 1, or 2. The mean of those scores is the result.
+
+A 2 is readable English that continues the prompt and finishes the thought. A 1 continues only partly, repeats itself, or wanders off the subject. A 0 is empty, not readable words, or does not continue the prompt. Those rules are [dataset/rubric.txt](dataset/rubric.txt).
+
+The judge does not check facts. A completion can state something false and still score 2.
 
 ## Terms
 
