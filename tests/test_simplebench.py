@@ -359,6 +359,29 @@ def test_render_answers_keeps_prompt_order_and_collapses_whitespace():
         render_answers(prompts, {"c001": "it helps", "c002": 1})
 
 
+def test_qwen_continuation_stops_at_the_first_sentence_end():
+    import importlib.util
+
+    path = Path(__file__).resolve().parents[1] / "examples" / "answer_qwen.py"
+    spec = importlib.util.spec_from_file_location("answer_qwen", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    prompt = "education is important because"
+    assert module.MODEL_ID == "Qwen/Qwen2.5-0.5B"
+    assert module.continuation(prompt, " it helps people learn. It also costs money.") == (
+        "it helps people learn."
+    )
+    assert module.continuation(prompt, "Education is important because it opens work.") == "it opens work."
+    assert module.continuation(prompt, " does it help?") == "does it help?"
+    assert module.continuation(prompt, " it helps people learn new skills") == "it helps people learn new skills"
+    assert module.continuation(prompt, "   ") == ""
+    assert module.continuation(prompt, prompt) == ""
+    with pytest.raises(RuntimeError, match="no text"):
+        module.continuation(prompt, None)  # type: ignore[arg-type]
+
+
 def test_reference_sends_the_prompt_as_the_only_message():
     import importlib.util
 
