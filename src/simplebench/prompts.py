@@ -1,16 +1,12 @@
-"""The 100 prompts and the rubric text. Scores never go in data/."""
+"""The prompt list and the exam files. Scores never go in dataset/."""
 
 import hashlib
 import json
 from dataclasses import dataclass
 from pathlib import Path
 
-DATASET_ID = "simplebench"
-# simplebench-1 sends the whole completion to gpt-4.1 at temperature 0,
-# with a 200-token reply cap. Bump this when the prompt file, the rubric,
-# the judge, the temperature, the token cap, or how much of the completion
-# is sent changes. Tag the repo with the same id. The answers are not part of it.
-EXAM_ID = "simplebench-1"
+from simplebench.judge import JUDGE_MODEL, JUDGE_PROVIDER
+
 PROMPT_COUNT = 100
 
 
@@ -26,30 +22,89 @@ class Prompt:
     prompt: str
 
 
+@dataclass(frozen=True)
+class Judge:
+    """The model named in ``dataset/config.json``. The scorer calls this model."""
+
+    provider: str
+    model: str
+
+
+@dataclass(frozen=True)
+class Exam:
+    """One scoring setup. ``sha256`` covers this file, its prompts, and its rubric."""
+
+    id: str
+    prompts: tuple[Prompt, ...]
+    rubric: str
+    judge: Judge
+    sha256: str
+
+
 def repo_root() -> Path:
     here = Path(__file__).resolve()
     for parent in here.parents:
-        if (parent / "pyproject.toml").is_file() and (parent / "data" / "prompts.jsonl").is_file():
+        if (parent / "pyproject.toml").is_file() and (parent / "dataset" / "prompts.jsonl").is_file():
             return parent
-    raise PromptError("could not find the repository root (pyproject.toml and data/prompts.jsonl)")
+    raise PromptError("could not find the repository root (pyproject.toml and dataset/prompts.jsonl)")
 
 
 def dataset_dir() -> Path:
-    return repo_root() / "data"
+    return repo_root() / "dataset"
 
 
-def exam_stamp() -> dict[str, str]:
-    """The id and file hashes a later run compares before trusting a mean."""
-    folder = dataset_dir()
-    return {
-        "exam": EXAM_ID,
-        "prompts_sha256": _sha256(folder / "prompts.jsonl"),
-        "rubric_sha256": _sha256(folder / "rubric.txt"),
-    }
+def load_exam(root: Path | None = None) -> Exam:
+    """Read ``dataset/config.json`` and the prompt and rubric files it names."""
+    folder = dataset_dir() if root is None else root
+    path = folder / "config.json"
+    if not path.is_file():
+        raise PromptError(f"missing exam: {path}")
+    exam_bytes = path.read_bytes()
+    data = json.loads(exam_bytes.decode("utf-8"))
+    if not isinstance(data, dict):
+        raise PromptError(f"{path}: exam must be an object")
+    exam_id = data.get("exam")
+    if not isinstance(exam_id, str) or _path_segment(exam_id) != exam_id:
+        raise PromptError(f"{path}: exam id must be one path segment")
+    judge = _judge(data.get("judge"), path)
+    prompts_path = _named_file(folder, path, data.get("prompts"), "prompts")
+    rubric_path = _named_file(folder, path, data.get("rubric"), "rubric")
+    rubric = _rubric_text(rubric_path)
+    prompts = load_prompts(prompts_path)
+    digest = hashlib.sha256(exam_bytes + prompts_path.read_bytes() + rubric_path.read_bytes()).hexdigest()
+    return Exam(exam_id, prompts, rubric, judge, digest)
 
 
-def _sha256(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+def _judge(data: object, path: Path) -> Judge:
+    if not isinstance(data, dict):
+        raise PromptError(f"{path}: judge must be an object")
+    provider = data.get("provider")
+    model = data.get("model")
+    if provider != JUDGE_PROVIDER or model != JUDGE_MODEL:
+        raise PromptError(f"{path}: judge must be {JUDGE_PROVIDER}/{JUDGE_MODEL}")
+    return Judge(provider, model)
+
+
+def _named_file(folder: Path, exam_path: Path, name: object, field: str) -> Path:
+    if not isinstance(name, str) or _path_segment(name) != name:
+        raise PromptError(f"{exam_path}: {field} must name a file in the dataset folder")
+    path = folder / name
+    if not path.is_file():
+        raise PromptError(f"missing {field}: {path}")
+    return path
+
+
+def _rubric_text(path: Path) -> str:
+    rubric = path.read_text(encoding="utf-8")
+    if not rubric.strip():
+        raise PromptError(f"{path}: rubric must be non-empty text")
+    return rubric if rubric.endswith("\n") else rubric + "\n"
+
+
+def _path_segment(name: str) -> str:
+    if name in {"", ".", ".."} or "/" in name or "\\" in name or name != name.strip():
+        return ""
+    return name
 
 
 def load_prompts(path: Path | None = None) -> tuple[Prompt, ...]:
@@ -75,17 +130,6 @@ def load_prompts(path: Path | None = None) -> tuple[Prompt, ...]:
     if len(prompts) != PROMPT_COUNT:
         raise PromptError(f"{path}: expected {PROMPT_COUNT} prompts, found {len(prompts)}")
     return tuple(prompts)
-
-
-def load_rubric(path: Path | None = None) -> str:
-    """The rubric file is the system text sent to the judge."""
-    path = dataset_dir() / "rubric.txt" if path is None else path
-    if not path.is_file():
-        raise PromptError(f"missing rubric: {path}")
-    text = path.read_text(encoding="utf-8").strip()
-    if not text:
-        raise PromptError(f"rubric is empty: {path}")
-    return text + "\n"
 
 
 def load_answers(path: Path) -> dict[str, str]:

@@ -1,31 +1,23 @@
 """Sentence-completion commands. Run them from the repository root.
 
     uv run python examples/answer_openai.py --out answers.jsonl
-    uv run python -m simplebench judge --answers answers.jsonl --run runs/their-model
+    uv run python -m simplebench judge --answers answers.jsonl --model their-model --checkpoint step-1000
+    uv run python -m simplebench compare --left runs/their-model/step-1000 --right runs/their-model/step-2000
 
-The judge files land in ``runs/their-model/judges/<judge>/``.
+The score lands in ``runs/<model>/<checkpoint>/``.
 
-``prompts`` prints the 100 prompts.
-``judge`` scores an answer file. The default judge is gpt-4.1.
-Pass ``--provider anthropic`` to score with claude-sonnet-4-5.
+``judge`` scores an answer file with ``dataset/config.json``.
+``compare`` prints the two means and the prompts whose score moved.
 """
 
 import argparse
-import json
 import os
 from collections.abc import Sequence
 from pathlib import Path
 
-from simplebench.judge import DEFAULT_MODEL, JudgeError, anthropic_complete, openai_complete
-from simplebench.prompts import PromptError, load_prompts, repo_root
-from simplebench.score import judge_answers
-
-_KEY = {"openai": "OPENAI_API_KEY", "anthropic": "ANTHROPIC_API_KEY"}
-
-
-def _prompts(_args: argparse.Namespace) -> None:
-    for item in load_prompts():
-        print(json.dumps({"id": item.id, "prompt": item.prompt}, ensure_ascii=False))
+from simplebench.judge import JudgeError, openai_complete
+from simplebench.prompts import PromptError, load_exam, repo_root
+from simplebench.score import compare_runs, judge_answers, run_dir
 
 
 def load_env(path: Path) -> None:
@@ -45,38 +37,53 @@ def load_env(path: Path) -> None:
 
 def _judge(args: argparse.Namespace) -> None:
     load_env(repo_root() / ".env")
-    provider = args.provider
-    model = args.model or DEFAULT_MODEL[provider]
-    key_name = _KEY[provider]
-    api_key = os.environ.get(key_name, "").strip()
+    exam = load_exam()
+    run = run_dir(args.model, args.checkpoint)
+    api_key = os.environ.get("OPENAI_API_KEY", "").strip()
     if not api_key:
-        raise PromptError(f"set {key_name} to call the judge")
-    poster = openai_complete if provider == "openai" else anthropic_complete
+        raise PromptError("set OPENAI_API_KEY to call the judge")
 
     def complete(system: str, user: str) -> str:
-        return poster(api_key, model, system, user)
+        return openai_complete(api_key, exam.judge.model, system, user)
 
-    metrics = judge_answers(args.answers, args.run, complete, provider, model)
-    written = args.run / "judges" / model / "metrics.json"
+    metrics = judge_answers(args.answers, run, complete, exam, args.model, args.checkpoint)
+    written = run / "metrics.json"
     print(
         f"wrote {written} mean_score={metrics['mean_score']:.2f} "
-        f"pass_rate={metrics['pass_rate']:.2f} model={model}"
+        f"pass_rate={metrics['pass_rate']:.2f} exam={exam.id} model={args.model}"
     )
+
+
+def _compare(args: argparse.Namespace) -> None:
+    result = compare_runs(args.left, args.right)
+    print(f"exam {result['exam']}")
+    print(
+        f"{result['left_model']} {result['left_checkpoint']} mean_score={result['left_mean']:.2f}"
+    )
+    print(
+        f"{result['right_model']} {result['right_checkpoint']} mean_score={result['right_mean']:.2f}"
+    )
+    if not result["changed"]:
+        print("no score changed")
+        return
+    for prompt_id, left_score, right_score in result["changed"]:
+        print(f"{prompt_id} {left_score} -> {right_score}")
 
 
 def main(argv: Sequence[str] | None = None) -> None:
     parser = argparse.ArgumentParser(prog="simplebench", description="Sentence-completion exam.")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    prompts = sub.add_parser("prompts", help="Print the 100 prompts as JSON lines.")
-    prompts.set_defaults(func=_prompts)
-
-    judge = sub.add_parser("judge", help="Score an answer file with a judge model.")
+    judge = sub.add_parser("judge", help="Score an answer file with dataset/config.json.")
     judge.add_argument("--answers", type=Path, required=True)
-    judge.add_argument("--run", type=Path, required=True)
-    judge.add_argument("--provider", choices=tuple(DEFAULT_MODEL), default="openai")
-    judge.add_argument("--model", default=None, help="Replaces the provider default.")
+    judge.add_argument("--model", required=True, help="Model that wrote the answers.")
+    judge.add_argument("--checkpoint", required=True, help="Checkpoint of that model.")
     judge.set_defaults(func=_judge)
+
+    compare = sub.add_parser("compare", help="Compare two checkpoints of one exam.")
+    compare.add_argument("--left", type=Path, required=True, help="A runs/<model>/<checkpoint> folder.")
+    compare.add_argument("--right", type=Path, required=True, help="The other checkpoint folder.")
+    compare.set_defaults(func=_compare)
 
     args = parser.parse_args(list(argv) if argv is not None else None)
     try:

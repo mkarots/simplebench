@@ -4,16 +4,16 @@ This module does not open a network connection. The caller passes ``complete``.
 """
 
 import json
+import shutil
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 from simplebench.judge import Complete, Judgment, score_completion
-from simplebench.prompts import DATASET_ID, Prompt, PromptError, exam_stamp, load_answers, load_prompts, load_rubric
+from simplebench.prompts import Exam, Prompt, PromptError, load_answers, repo_root
 
 JUDGMENTS_NAME = "judgments.jsonl"
 METRICS_NAME = "metrics.json"
-METADATA_NAME = "metadata.json"
-JUDGES_DIR = "judges"
+ANSWERS_NAME = "answers.jsonl"
 
 
 def score_rows(
@@ -34,20 +34,18 @@ def score_rows(
     )
 
 
-def summarize(judgments: Sequence[Judgment], provider: str, model: str) -> dict:
-    """The decision number is ``mean_score``. ``pass_rate`` is the share of 2s."""
+def summarize(judgments: Sequence[Judgment], exam: Exam, model: str, checkpoint: str) -> dict:
+    """The decision number is ``mean_score``. ``model`` wrote the answers. ``judge`` scored them."""
     counts = {str(score): 0 for score in (0, 1, 2)}
     for row in judgments:
         counts[str(row.score)] += 1
     total = len(judgments)
-    stamp = exam_stamp()
     return {
-        "dataset": DATASET_ID,
-        "exam": stamp["exam"],
-        "prompts_sha256": stamp["prompts_sha256"],
-        "rubric_sha256": stamp["rubric_sha256"],
-        "provider": provider,
+        "exam": exam.id,
+        "exam_sha256": exam.sha256,
         "model": model,
+        "checkpoint": checkpoint,
+        "judge": {"provider": exam.judge.provider, "model": exam.judge.model},
         "rows": total,
         "mean_score": (sum(row.score for row in judgments) / total) if total else 0.0,
         "counts": counts,
@@ -57,32 +55,29 @@ def summarize(judgments: Sequence[Judgment], provider: str, model: str) -> dict:
     }
 
 
-def judge_dir(run: Path, model: str) -> Path:
-    """One folder per judge, under the run that holds the answers."""
-    return run / JUDGES_DIR / model
+def run_dir(model: str, checkpoint: str, root: Path | None = None) -> Path:
+    """``runs/<model>/<checkpoint>`` for the model that wrote the answers."""
+    base = repo_root() if root is None else root
+    return base / "runs" / _path_segment(model, "model") / _path_segment(checkpoint, "checkpoint")
 
 
-def write_metadata(run: Path, provider: str, model: str, answers: str = "answers.jsonl") -> dict:
-    """Name the model that wrote the answers. This is not the judge."""
-    payload = {
-        "dataset": DATASET_ID,
-        "model": model,
-        "provider": provider,
-        "answers": answers,
-    }
-    _write_json(run / METADATA_NAME, payload)
-    return payload
+def _path_segment(name: str, label: str) -> str:
+    if name in {"", ".", ".."} or "/" in name or "\\" in name or name != name.strip():
+        raise PromptError(f"{label} must be one path segment, got {name!r}")
+    return name
 
 
 def write_run(
     run: Path,
     judgments: Sequence[Judgment],
-    provider: str,
+    exam: Exam,
     model: str,
+    checkpoint: str,
+    answers_path: Path,
 ) -> dict:
-    """Write this judge's files under ``run/judges/<model>``. Returns the metrics object."""
-    folder = judge_dir(run, model)
-    folder.mkdir(parents=True, exist_ok=True)
+    """Write the score and a copy of the answers into ``run``. Returns the metrics object."""
+    run.mkdir(parents=True, exist_ok=True)
+    _keep_answers(answers_path, run)
     lines = [
         json.dumps(
             {
@@ -95,9 +90,9 @@ def write_run(
         )
         for row in judgments
     ]
-    (folder / JUDGMENTS_NAME).write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
-    metrics = summarize(judgments, provider, model)
-    _write_json(folder / METRICS_NAME, metrics)
+    (run / JUDGMENTS_NAME).write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
+    metrics = summarize(judgments, exam, model, checkpoint)
+    _write_json(run / METRICS_NAME, metrics)
     return metrics
 
 
@@ -105,12 +100,73 @@ def judge_answers(
     answers_path: Path,
     run: Path,
     complete: Complete,
-    provider: str,
+    exam: Exam,
     model: str,
+    checkpoint: str,
 ) -> dict:
-    """Load the frozen prompts, score the answer file, and write the run."""
-    judgments = score_rows(load_prompts(), load_answers(answers_path), load_rubric(), complete)
-    return write_run(run, judgments, provider, model)
+    """Score the answer file with this exam and write the run."""
+    judgments = score_rows(exam.prompts, load_answers(answers_path), exam.rubric, complete)
+    return write_run(run, judgments, exam, model, checkpoint, answers_path)
+
+
+def compare_runs(left: Path, right: Path) -> dict:
+    """Compare two checkpoints of one exam. The ids are the prompts whose score moved."""
+    left_metrics = _read_json(left / METRICS_NAME)
+    right_metrics = _read_json(right / METRICS_NAME)
+    left_exam = (left_metrics.get("exam"), left_metrics.get("exam_sha256"))
+    right_exam = (right_metrics.get("exam"), right_metrics.get("exam_sha256"))
+    if left_exam != right_exam:
+        raise PromptError(f"exams differ: {left_exam[0]} {left_exam[1]} and {right_exam[0]} {right_exam[1]}")
+    left_scores = _scores(left)
+    right_scores = _scores(right)
+    if set(left_scores) != set(right_scores):
+        raise PromptError("judgment ids differ")
+    changed = tuple(
+        (prompt_id, left_scores[prompt_id], right_scores[prompt_id])
+        for prompt_id in sorted(left_scores)
+        if left_scores[prompt_id] != right_scores[prompt_id]
+    )
+    return {
+        "exam": left_metrics["exam"],
+        "left_model": left_metrics.get("model", ""),
+        "right_model": right_metrics.get("model", ""),
+        "left_checkpoint": left_metrics.get("checkpoint", left.name),
+        "right_checkpoint": right_metrics.get("checkpoint", right.name),
+        "left_mean": left_metrics["mean_score"],
+        "right_mean": right_metrics["mean_score"],
+        "changed": changed,
+    }
+
+
+def _keep_answers(answers_path: Path, run: Path) -> None:
+    target = run / ANSWERS_NAME
+    if not answers_path.is_file():
+        raise PromptError(f"missing answers: {answers_path}")
+    if answers_path.resolve() == target.resolve():
+        return
+    shutil.copyfile(answers_path, target)
+
+
+def _scores(run: Path) -> dict[str, int]:
+    path = run / JUDGMENTS_NAME
+    if not path.is_file():
+        raise PromptError(f"missing judgments: {path}")
+    scores: dict[str, int] = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        row = json.loads(line)
+        scores[row["id"]] = row["score"]
+    return scores
+
+
+def _read_json(path: Path) -> dict:
+    if not path.is_file():
+        raise PromptError(f"missing metrics: {path}")
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        raise PromptError(f"{path}: metrics must be an object")
+    return data
 
 
 def _write_json(path: Path, payload: dict) -> None:
