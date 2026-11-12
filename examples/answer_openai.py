@@ -18,54 +18,7 @@ from simplebench.prompts import load_prompts, repo_root
 
 
 def complete(client: OpenAI, model: str, prompt: str) -> str:
-    """Return the model reply. The prompt is the only message.
-
-    ``Qwen/Qwen2.5-0.5B`` continues the stem on this machine. Any other model
-    is one OpenAI chat turn, temperature 0, with no system message.
-    """
-    if model in {"Qwen/Qwen2.5-0.5B", "Qwen2.5-0.5B"}:
-        import torch
-        from transformers import AutoModelForCausalLM, AutoTokenizer
-
-        model_id = "Qwen/Qwen2.5-0.5B"
-        loaded = getattr(complete, "_qwen", None)
-        if loaded is None or loaded[0] != model_id:
-            tokenizer = AutoTokenizer.from_pretrained(model_id)
-            if tokenizer.pad_token_id is None:
-                tokenizer.pad_token = tokenizer.eos_token
-            device = "mps" if torch.backends.mps.is_available() else "cpu"
-            dtype = torch.float16 if device == "mps" else torch.float32
-            try:
-                qwen = AutoModelForCausalLM.from_pretrained(model_id, dtype=dtype)
-            except TypeError:
-                qwen = AutoModelForCausalLM.from_pretrained(model_id, torch_dtype=dtype)
-            qwen.to(device)
-            qwen.eval()
-            complete._qwen = (model_id, qwen, tokenizer)
-        _, qwen, tokenizer = complete._qwen
-        device = next(qwen.parameters()).device
-        encoded = tokenizer(prompt, return_tensors="pt")
-        encoded = {key: value.to(device) for key, value in encoded.items()}
-        with torch.no_grad():
-            output = qwen.generate(
-                **encoded,
-                max_new_tokens=64,
-                do_sample=False,
-                pad_token_id=tokenizer.pad_token_id,
-            )
-        new_tokens = output[0, encoded["input_ids"].shape[-1] :]
-        text = tokenizer.decode(new_tokens, skip_special_tokens=True)
-        if not isinstance(text, str):
-            raise RuntimeError("model reply has no text")
-        text = text.strip()
-        stem = prompt.strip()
-        if stem and text.lower().startswith(stem.lower()):
-            text = text[len(stem) :].strip()
-        for index, char in enumerate(text):
-            if char in ".!?":
-                return text[: index + 1].strip()
-        return text
-
+    """Return the model reply. Replace this function to call another model."""
     reply = client.chat.completions.create(
         model=model,
         temperature=0,

@@ -20,11 +20,16 @@ The judge does not check facts. A completion can state something false and still
 
 ## Judged so far
 
-gpt-4.1 wrote the 100 answers and the current exam scored them. The checkpoint is [runs/gpt-4.1/smoke/](runs/gpt-4.1/smoke/). `model` in the metrics file is the model that wrote the answers. `judge` is gpt-4.1 from [datasets/simplebench-1/config.json](datasets/simplebench-1/config.json). The whole completion is sent, at temperature 0, with a 200-token reply cap. Each score is 0, 1, or 2. The mean is the result. To see why a mean is under 2, see [1](#note-1).
+Each model below wrote the 100 answers, and the current exam scored them. `model` in the metrics file is the model that wrote the answers. `judge` is gpt-4.1 from [datasets/simplebench-1/config.json](datasets/simplebench-1/config.json). Each score is 0, 1, or 2. The mean is the result.
+
+gpt-4.1 is [runs/gpt-4.1/smoke/](runs/gpt-4.1/smoke/). That script sends the whole completion, at temperature 0, with a 200-token reply cap. To see why that mean is under 2, see [1](#note-1).
+
+Qwen2.5-0.5B is [runs/Qwen2.5-0.5B/base/](runs/Qwen2.5-0.5B/base/). [examples/answer_qwen.py](examples/answer_qwen.py) continues each stem and stops at the first sentence end. The checkpoint is `base`, the released base weights.
 
 | Answers | Checkpoint | Judge | Mean | 2 | 1 | 0 | Result |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | gpt-4.1 | smoke | gpt-4.1 | 1.96 | 96 | 4 | 0 | [runs/gpt-4.1/smoke/metrics.json](runs/gpt-4.1/smoke/metrics.json) |
+| Qwen2.5-0.5B | base | gpt-4.1 | 1.70 | 70 | 30 | 0 | [runs/Qwen2.5-0.5B/base/metrics.json](runs/Qwen2.5-0.5B/base/metrics.json) |
 
 That metrics file carries `exam` (`simplebench-1`) and `exam_sha256` beside `mean_score`. Compare two means when both fields match. The answers are copied into the checkpoint folder. They are not part of the exam.
 
@@ -34,11 +39,11 @@ That metrics file carries `exam` (`simplebench-1`) and `exam_sha256` beside `mea
 | --- | --- | --- |
 | Dataset | [datasets/simplebench-1/prompts.jsonl](datasets/simplebench-1/prompts.jsonl) | The 100 prompts a model completes |
 | Rubric | [datasets/simplebench-1/rubric.txt](datasets/simplebench-1/rubric.txt) | The scoring rules the judge reads |
-| Model | yours, or [examples/answer_openai.py](examples/answer_openai.py) | Reads the prompts and writes `answers.jsonl` |
+| Model | yours, [examples/answer_openai.py](examples/answer_openai.py), or [examples/answer_qwen.py](examples/answer_qwen.py) | Reads the prompts and writes `answers.jsonl` |
 | Exam | [datasets/simplebench-1/config.json](datasets/simplebench-1/config.json) | Which prompt file, which rubric file, and which judge. A later exam is another folder under `datasets/`. |
 | Scorer | [src/simplebench/__main__.py](src/simplebench/__main__.py) (`python -m simplebench judge`) | Reads `answers.jsonl` and writes `runs/<model>/<checkpoint>/` |
 
-[examples/answer_openai.py](examples/answer_openai.py) is the reference for producing answers. The finished run of that script, scored with the current exam, is [runs/gpt-4.1/smoke/](runs/gpt-4.1/smoke/).
+[examples/answer_openai.py](examples/answer_openai.py) is the reference for producing answers with an OpenAI model. The finished run of that script, scored with the current exam, is [runs/gpt-4.1/smoke/](runs/gpt-4.1/smoke/). [examples/answer_qwen.py](examples/answer_qwen.py) is the same step for Qwen2.5-0.5B. That scored run is [runs/Qwen2.5-0.5B/base/](runs/Qwen2.5-0.5B/base/).
 
 ## A slice of the dataset
 
@@ -55,6 +60,8 @@ Ids run from `c001` to `c100`. The matching lines in [runs/gpt-4.1/smoke/answers
 - [c001](runs/gpt-4.1/smoke/answers.jsonl#L1) starts `**Education is important because** it provides individuals with the knowledge, skills, and values necessary to navigate the world`.
 - [c002](runs/gpt-4.1/smoke/answers.jsonl#L2) starts `Sleep is important because it plays a vital role in your physical health, mental well-being, and overall quality of life`.
 - [c003](runs/gpt-4.1/smoke/answers.jsonl#L3) starts `Water is important because: 1. **Essential for Life:** All living organisms need water to survive`.
+
+The same first prompt in [runs/Qwen2.5-0.5B/base/answers.jsonl](runs/Qwen2.5-0.5B/base/answers.jsonl#L1) is the continuation `it helps us to understand the world around us and to make sense of it.`
 
 `completion` is a string. `""` is valid and scores 0. Any other field is ignored.
 
